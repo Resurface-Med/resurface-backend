@@ -4,6 +4,8 @@
 // endpoint can only ever produce MBChB multiple-choice questions — it cannot be
 // repurposed as a free general-purpose Claude proxy.
 
+import { createClient } from "@supabase/supabase-js";
+
 const MAX_COUNT = 20;
 
 const DIFF_DESC = {
@@ -39,12 +41,26 @@ function allowedOrigin(origin) {
 function corsHeaders(origin) {
   const h = {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "content-type, x-resurface-passcode",
+    "Access-Control-Allow-Headers": "content-type, authorization",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
   if (origin) h["Access-Control-Allow-Origin"] = origin;
   return h;
+}
+
+/** Resolves the bearer token to a user, or null. Supabase checks the signature. */
+async function verify(req) {
+  const token = (req.headers.get("authorization") || "").replace(/^Bearer /i, "");
+  if (!token) return null;
+
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!url || !anonKey) return null;
+
+  const supabase = createClient(url, anonKey);
+  const { data, error } = await supabase.auth.getUser(token);
+  return error ? null : data.user;
 }
 
 function json(body, status, origin) {
@@ -59,18 +75,18 @@ export async function OPTIONS(req) {
 export async function POST(req) {
   const origin = allowedOrigin(req.headers.get("origin"));
 
-  const passcode = process.env.RESURFACE_PASSCODE;
-  if (passcode && req.headers.get("x-resurface-passcode") !== passcode) {
-    return json({ error: "Wrong access code." }, 401, origin);
-  }
+  // A shared access code couldn't be revoked for one person and told us
+  // nothing about who was calling. The session token does both: Supabase
+  // verifies the signature, and we get a user id to rate limit against.
+  const user = await verify(req);
+  if (!user) return json({ error: "Sign in to generate questions." }, 401, origin);
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return json({ error: "Server is missing ANTHROPIC_API_KEY." }, 500, origin);
   }
 
-  const id = req.headers.get("x-forwarded-for") || "anon";
-  if (rateLimited(id)) {
+  if (rateLimited(user.id)) {
     return json({ error: "Slow down — too many generations. Try again in a minute." }, 429, origin);
   }
 

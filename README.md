@@ -11,9 +11,10 @@ Related repos: `resurface-app`, `resurface-landing`.
 
 ```
 resurface-app (browser)
-      │  POST /api/generate  + x-resurface-passcode
+      │  POST /api/generate  + Bearer <supabase session>
       ▼
-  this service ──── ANTHROPIC_API_KEY ───▶ Claude
+  this service ──┬── verifies the token with Supabase
+                 └── ANTHROPIC_API_KEY ───▶ Claude
       │
       └─ builds the system prompt server-side, so the endpoint
          can only ever produce MBChB questions
@@ -38,7 +39,7 @@ the browser will block every response.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| `POST` | `/api/generate` | Generates MCQs. Requires `x-resurface-passcode`. |
+| `POST` | `/api/generate` | Generates MCQs. Requires a signed-in Supabase session. |
 | `OPTIONS` | `/api/generate` | CORS preflight. |
 
 Request body is `{ userContent, difficulty, count }`, where `userContent` is an
@@ -52,12 +53,10 @@ is someone generating medical questions they didn't want.
 
 ## Known gaps
 
-- **Rate limiting is in-memory** and resets whenever an instance goes cold. It
-  stops runaway loops, not a leaked access code. Upstash Redis is the fix.
-- **The access code is shared**, not per-user, so it cannot be revoked for one
-  person. It is a bill guard, not authentication.
-- No auth, no database, no progress sync yet — the reason this repo is separate
-  from the app is that those are coming, not that they exist.
+- **Rate limiting is in-memory** and resets whenever an instance goes cold, so
+  the per-user limit is best-effort. Upstash Redis is the fix.
+- Every request verifies the token with Supabase, which costs a round-trip.
+  Verifying the JWT signature locally would remove it.
 
 ## Out of scope
 

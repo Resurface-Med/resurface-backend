@@ -1,16 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { POST, OPTIONS } from "../app/api/generate/route.js";
 
-// Guards the parts that protect the API key and the bill: the access code,
-// the CORS allowlist, and never echoing an upstream auth failure to the client.
+// The route resolves the bearer token through supabase-js, so the client is
+// stubbed rather than reaching the network. Must be hoisted above the import.
+const mockGetUser = vi.fn();
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: () => ({ auth: { getUser: (...a) => mockGetUser(...a) } }),
+}));
+
+const { POST, OPTIONS } = await import("../app/api/generate/route.js");
+
+// Guards the parts that protect the API key and the bill: authentication, the
+// CORS allowlist, and never echoing an upstream auth failure to the client.
 
 const ORIGIN = "https://app.resurface.example";
 
-function req({ origin = ORIGIN, passcode = "test-code", body = { userContent: [{ type: "text", text: "x" }] }, ip } = {}) {
+function req({ origin = ORIGIN, token = "good-token", body = { userContent: [{ type: "text", text: "x" }] } } = {}) {
   const headers = new Headers({ "content-type": "application/json" });
   if (origin) headers.set("origin", origin);
-  if (passcode !== null) headers.set("x-resurface-passcode", passcode);
-  headers.set("x-forwarded-for", ip || Math.random().toString(36));
+  if (token !== null) headers.set("authorization", `Bearer ${token}`);
   return new Request("https://api.test/api/generate", {
     method: "POST",
     headers,
@@ -25,29 +32,37 @@ function anthropicReturns(payload, ok = true, status = 200) {
   });
 }
 
+let userId = "user-1";
+
 beforeEach(() => {
   process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-  process.env.RESURFACE_PASSCODE = "test-code";
+  process.env.SUPABASE_URL = "https://test.supabase.co";
+  process.env.SUPABASE_ANON_KEY = "sb_publishable_test";
   process.env.ALLOWED_ORIGINS = `${ORIGIN},http://localhost:5173`;
+  userId = "user-" + Math.random().toString(36).slice(2);
+  mockGetUser.mockImplementation(async (token) =>
+    token === "good-token"
+      ? { data: { user: { id: userId } }, error: null }
+      : { data: { user: null }, error: new Error("bad jwt") });
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("access code", () => {
-  it("rejects a wrong code", async () => {
-    const res = await POST(req({ passcode: "nope" }));
+describe("authentication", () => {
+  it("rejects an invalid token", async () => {
+    const res = await POST(req({ token: "forged" }));
     expect(res.status).toBe(401);
-    expect((await res.json()).error).toMatch(/access code/i);
+    expect((await res.json()).error).toMatch(/sign in/i);
   });
 
-  it("rejects a missing code", async () => {
-    const res = await POST(req({ passcode: null }));
+  it("rejects a missing token", async () => {
+    const res = await POST(req({ token: null }));
     expect(res.status).toBe(401);
   });
 
-  it("accepts the right code", async () => {
+  it("accepts a valid session", async () => {
     anthropicReturns({ content: [{ text: '[{"q":"a"}]' }] });
     const res = await POST(req());
     expect(res.status).toBe(200);
@@ -86,7 +101,7 @@ describe("request validation", () => {
   it("rejects a malformed body", async () => {
     const res = await POST(new Request("https://api.test/api/generate", {
       method: "POST",
-      headers: { "content-type": "application/json", origin: ORIGIN, "x-resurface-passcode": "test-code" },
+      headers: { "content-type": "application/json", origin: ORIGIN, authorization: "Bearer good-token" },
       body: "not json",
     }));
     expect(res.status).toBe(400);
@@ -130,11 +145,10 @@ describe("upstream failures", () => {
 });
 
 describe("rate limiting", () => {
-  it("throttles a single caller after the window fills", async () => {
+  it("throttles a single user after the window fills", async () => {
     anthropicReturns({ content: [{ text: "[]" }] });
-    const ip = "10.0.0.1";
     const codes = [];
-    for (let i = 0; i < 12; i++) codes.push((await POST(req({ ip }))).status);
+    for (let i = 0; i < 12; i++) codes.push((await POST(req())).status);
     expect(codes.filter(c => c === 429).length).toBeGreaterThan(0);
   });
 });
