@@ -29,8 +29,14 @@ function rateLimited(id) {
   return recent.length > MAX_PER_WINDOW;
 }
 
+const DEFAULT_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "https://resurface-app-eight.vercel.app",
+].join(",");
+
 function allowedOrigin(origin) {
-  const allowed = (process.env.ALLOWED_ORIGINS || "")
+  const allowed = (process.env.ALLOWED_ORIGINS || DEFAULT_ORIGINS)
     .split(",")
     .map(s => s.trim())
     .filter(Boolean);
@@ -49,17 +55,23 @@ function corsHeaders(origin) {
   return h;
 }
 
+// Same public values the app ships in its bundle: enough to ask Supabase
+// whether a token is valid, and useless for anything else. Defaulting them
+// means a missing env var can't silently turn every request into a 401.
+const DEFAULT_SUPABASE_URL = "https://uhqpljteohitvytwfadp.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_0ZlQhc0Gn_bD5-AFIgPOrw_xKVHv8hJ";
+
 /** Resolves the bearer token to a user, or null. Supabase checks the signature. */
 async function verify(req) {
   const token = (req.headers.get("authorization") || "").replace(/^Bearer /i, "");
   if (!token) return null;
 
-  const url = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!url || !anonKey) return null;
+  const url = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
 
   const supabase = createClient(url, anonKey);
   const { data, error } = await supabase.auth.getUser(token);
+  if (error) console.error("[generate] token rejected:", error.message);
   return error ? null : data.user;
 }
 
