@@ -32,6 +32,10 @@ function rateLimited(id) {
 const DEFAULT_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:5174",
+  "https://app.tryresurface.com",
+  "https://tryresurface.com",
+  "https://www.tryresurface.com",
+  // Kept so the vercel.app URL keeps working during the domain cutover.
   "https://resurface-app-eight.vercel.app",
 ].join(",");
 
