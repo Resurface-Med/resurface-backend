@@ -40,12 +40,19 @@ const DEFAULT_ORIGINS = [
 ].join(",");
 
 function allowedOrigin(origin) {
-  const allowed = (process.env.ALLOWED_ORIGINS || DEFAULT_ORIGINS)
+  // Union, not override. ALLOWED_ORIGINS used to replace this list, which meant
+  // a stale env var pointing at an old deployment silently blocked the real
+  // domain — the failure looks like a CORS error in someone's browser and
+  // nowhere in the logs. The canonical origins are always allowed; the env var
+  // can only add to them.
+  const fromEnv = (process.env.ALLOWED_ORIGINS || "")
     .split(",")
     .map(s => s.trim())
     .filter(Boolean);
+
+  const allowed = new Set([...DEFAULT_ORIGINS.split(","), ...fromEnv]);
   if (!origin) return null;
-  return allowed.includes(origin) ? origin : null;
+  return allowed.has(origin) ? origin : null;
 }
 
 function corsHeaders(origin) {
