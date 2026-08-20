@@ -14,7 +14,8 @@ resurface-app (browser)
       │  POST /api/generate  + Bearer <supabase session>
       ▼
   this service ──┬── verifies the token with Supabase
-                 └── ANTHROPIC_API_KEY ───▶ Claude
+                 └── GEMINI_API_KEY ───▶ Gemini Flash
+                       (or ANTHROPIC_API_KEY ──▶ Claude, if no Gemini key)
       │
       └─ builds the system prompt server-side, so the endpoint
          can only ever produce MBChB questions
