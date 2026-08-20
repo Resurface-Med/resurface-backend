@@ -16,11 +16,16 @@ import { createClient } from "@supabase/supabase-js";
 
 const MAX_COUNT = 20;
 
-// The free tier's Flash model still carries its -preview suffix: "gemini-3-flash"
-// is rejected outright, which is a better failure than a silent fallback, but
-// only if the name is right. Overridable, so switching model — to a stable
-// paid one, or a cheaper Flash-Lite — is an environment variable.
-const DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview";
+// Flash-Lite, not Flash, and the reason is the free tier's shape rather than
+// the model's. Every full Flash model — 3, 3.5, 3.6, 3.7 — is capped at 20
+// requests a day on a free key, which across a hundred users is one lecture
+// each per five days. The Flash-Lite tier gets 500 a day and 15 a minute for
+// the same £0, which is the difference between unusable and workable.
+//
+// The trade is real: Flash-Lite is weaker at the per-option explanations,
+// which is where these models show their seams. If billing is ever switched
+// on, set GEMINI_MODEL to gemini-3.7-flash and that trade goes away.
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 const DIFF_DESC = {
