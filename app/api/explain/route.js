@@ -22,7 +22,8 @@ const MAX_PER_WINDOW = 20;
 const SYSTEM = `You are helping a Year 1 medical student who has just answered a multiple-choice question incorrectly.
 They chose one option. Explain, in plain English, why the thing they were probably thinking is wrong, then why the correct answer is right.
 Address the specific confusion their choice implies — do not simply restate the model answer.
-Be concrete: name the mechanism, the structure, the value. Do not be encouraging or apologetic. No preamble.`;
+Be concrete: name the mechanism, the structure, the value. Do not be encouraging or apologetic. No preamble.
+Write chemistry and maths in plain Unicode (ΔG, Na⁺, Ca²⁺, →). Never LaTeX, never $…$, never markdown.`;
 
 const SCHEMA = {
   type: "object",
