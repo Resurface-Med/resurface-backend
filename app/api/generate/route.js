@@ -24,7 +24,7 @@ const MAX_COUNT = 20;
 // tier is free — 500 a day, 15 a minute — so put this back to
 // gemini-3.5-flash-lite once the comparison is done, or switch on billing,
 // after which the quota stops mattering and this becomes the right default.
-const DEFAULT_GEMINI_MODEL = "gemini-3.7-flash";
+const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 const DIFF_DESC = {
@@ -221,22 +221,34 @@ async function callGemini({ apiKey, userContent, n, diffDesc }) {
   return { ok: true, text: geminiText(await r.json()) };
 }
 
+// Worth trying again: the request was fine and the far end was busy. A quota
+// error clears on its own within the minute, and an overloaded model is Google
+// running out of capacity for a popular free-tier model rather than anything
+// about this request.
+const TRANSIENT = new Set([429, 500, 502, 503, 504]);
+
 /**
- * One retry on an upstream 429.
+ * Up to two retries on a transient upstream failure.
  *
- * The free tier allows ten requests a minute across every user of the app, so
- * the limit is hit in bursts — a lecture ends and several people upload at
- * once — rather than by sustained volume. A single short wait converts most of
- * those collisions into a slightly slower generation instead of an error. Only
- * one retry, and a short one: this runs inside a serverless invocation that has
- * its own timeout, and the generation itself already takes seconds.
+ * Both failure modes here are bursty rather than sustained. The free tier's
+ * per-minute quota is shared across every user, so it is hit when several
+ * people upload at once after the same lecture; model overload comes and goes
+ * on Google's side in seconds. Waiting briefly turns most of both into a
+ * slightly slower generation instead of an error.
+ *
+ * Two attempts, backing off, and no more: this runs inside a serverless
+ * invocation with its own timeout and the generation itself already takes
+ * several seconds.
  */
 async function callGeminiWithRetry(args) {
-  const first = await callGemini(args);
-  if (first.ok || first.status !== 429) return first;
+  let last = await callGemini(args);
 
-  await new Promise(r => setTimeout(r, 1500));
-  return callGemini(args);
+  for (const wait of [1200, 2500]) {
+    if (last.ok || !TRANSIENT.has(last.status)) return last;
+    await new Promise(r => setTimeout(r, wait));
+    last = await callGemini(args);
+  }
+  return last;
 }
 
 async function callAnthropic({ apiKey, userContent, n, diffDesc }) {
@@ -339,10 +351,20 @@ export async function POST(req) {
     if (!result.ok) {
       // A quota error is worth naming honestly. "Something went wrong" invites
       // the user to retry immediately, which is the one thing that cannot work.
+      // Both of these mean "the far end was busy", and neither is the
+      // caller's fault, so say so plainly rather than showing them a status
+      // code and Google's internal model name.
       if (result.status === 429) {
         return json(
           { error: "Everyone's generating at once right now. Give it a minute and try again." },
           429,
+          origin,
+        );
+      }
+      if (TRANSIENT.has(result.status)) {
+        return json(
+          { error: "The question writer is busy at the moment. It usually clears in a minute — try again." },
+          503,
           origin,
         );
       }

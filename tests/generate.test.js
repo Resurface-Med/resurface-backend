@@ -284,6 +284,40 @@ describe("free-tier quota handling", () => {
   it("sends the configured default model", async () => {
     const f = geminiReturns({ output_text: JSON.stringify({ questions: ONE_Q }) });
     await POST(req());
-    expect(JSON.parse(f.mock.calls[0][1].body).model).toBe("gemini-3.7-flash");
+    expect(JSON.parse(f.mock.calls[0][1].body).model).toBe("gemini-3.6-flash");
+  });
+});
+
+describe("transient upstream failures", () => {
+  beforeEach(() => { process.env.GEMINI_API_KEY = "gem-test"; });
+  afterEach(() => { delete process.env.GEMINI_API_KEY; });
+
+  it("retries an overloaded model and succeeds on the second go", async () => {
+    let call = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      call += 1;
+      return call === 1
+        ? { ok: false, status: 503, json: async () => ({ error: { message: "overloaded" } }) }
+        : { ok: true, status: 200, json: async () => ({ output_text: JSON.stringify({ questions: ONE_Q }) }) };
+    });
+    const res = await POST(req());
+    expect(call).toBe(2);
+    expect(res.status).toBe(200);
+  });
+
+  it("gives up after three attempts and says the far end was busy", async () => {
+    const f = geminiReturns({ error: { message: "high demand" } }, false, 503);
+    const res = await POST(req());
+    const body = await res.json();
+    expect(f).toHaveBeenCalledTimes(3);
+    expect(res.status).toBe(503);
+    expect(body.error).toMatch(/busy/i);
+    expect(body.error).not.toMatch(/gemini/i);
+  });
+
+  it("does not retry a request that was simply wrong", async () => {
+    const f = geminiReturns({ error: { message: "Model 'nope' not found" } }, false, 404);
+    await POST(req());
+    expect(f).toHaveBeenCalledTimes(1);
   });
 });
