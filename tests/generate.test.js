@@ -284,6 +284,6 @@ describe("free-tier quota handling", () => {
   it("defaults to the model that has a free tier", async () => {
     const f = geminiReturns({ output_text: JSON.stringify({ questions: ONE_Q }) });
     await POST(req());
-    expect(JSON.parse(f.mock.calls[0][1].body).model).toBe("gemini-3-flash");
+    expect(JSON.parse(f.mock.calls[0][1].body).model).toBe("gemini-3-flash-preview");
   });
 });

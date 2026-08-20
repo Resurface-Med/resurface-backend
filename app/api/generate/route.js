@@ -16,12 +16,11 @@ import { createClient } from "@supabase/supabase-js";
 
 const MAX_COUNT = 20;
 
-// gemini-3-flash rather than the newer 3.7: it is the model Google keeps on the
-// free tier, and on the paid tier it is the cheapest of the full Flash models
-// at $0.50/$3.00 per million. So the same default works whether or not billing
-// is switched on, and turning billing on later changes nothing here.
-// Overridable, so a cheaper Flash-Lite is an environment variable away.
-const DEFAULT_GEMINI_MODEL = "gemini-3-flash";
+// The free tier's Flash model still carries its -preview suffix: "gemini-3-flash"
+// is rejected outright, which is a better failure than a silent fallback, but
+// only if the name is right. Overridable, so switching model — to a stable
+// paid one, or a cheaper Flash-Lite — is an environment variable.
+const DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview";
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 const DIFF_DESC = {
