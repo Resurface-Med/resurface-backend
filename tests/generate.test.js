@@ -255,3 +255,35 @@ describe("Gemini response handling", () => {
     expect(body.error).not.toContain("AIzaSy");
   });
 });
+
+describe("free-tier quota handling", () => {
+  beforeEach(() => { process.env.GEMINI_API_KEY = "gem-test"; });
+  afterEach(() => { delete process.env.GEMINI_API_KEY; });
+
+  it("retries once when the shared per-minute quota is hit", async () => {
+    let call = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      call += 1;
+      return call === 1
+        ? { ok: false, status: 429, json: async () => ({ error: { message: "quota" } }) }
+        : { ok: true, status: 200, json: async () => ({ output_text: JSON.stringify({ questions: ONE_Q }) }) };
+    });
+    const res = await POST(req());
+    expect(call).toBe(2);
+    expect(res.status).toBe(200);
+  });
+
+  it("says what actually happened when the retry also fails", async () => {
+    geminiReturns({ error: { message: "RESOURCE_EXHAUSTED" } }, false, 429);
+    const res = await POST(req());
+    const body = await res.json();
+    expect(res.status).toBe(429);
+    expect(body.error).toMatch(/generating at once/i);
+  });
+
+  it("defaults to the model that has a free tier", async () => {
+    const f = geminiReturns({ output_text: JSON.stringify({ questions: ONE_Q }) });
+    await POST(req());
+    expect(JSON.parse(f.mock.calls[0][1].body).model).toBe("gemini-3-flash");
+  });
+});

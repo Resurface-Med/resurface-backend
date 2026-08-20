@@ -16,9 +16,12 @@ import { createClient } from "@supabase/supabase-js";
 
 const MAX_COUNT = 20;
 
-// Latest stable Flash. Overridable so the model can be changed — including to
-// a cheaper Flash-Lite — without touching this file.
-const DEFAULT_GEMINI_MODEL = "gemini-3.7-flash";
+// gemini-3-flash rather than the newer 3.7: it is the model Google keeps on the
+// free tier, and on the paid tier it is the cheapest of the full Flash models
+// at $0.50/$3.00 per million. So the same default works whether or not billing
+// is switched on, and turning billing on later changes nothing here.
+// Overridable, so a cheaper Flash-Lite is an environment variable away.
+const DEFAULT_GEMINI_MODEL = "gemini-3-flash";
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 const DIFF_DESC = {
@@ -215,6 +218,24 @@ async function callGemini({ apiKey, userContent, n, diffDesc }) {
   return { ok: true, text: geminiText(await r.json()) };
 }
 
+/**
+ * One retry on an upstream 429.
+ *
+ * The free tier allows ten requests a minute across every user of the app, so
+ * the limit is hit in bursts — a lecture ends and several people upload at
+ * once — rather than by sustained volume. A single short wait converts most of
+ * those collisions into a slightly slower generation instead of an error. Only
+ * one retry, and a short one: this runs inside a serverless invocation that has
+ * its own timeout, and the generation itself already takes seconds.
+ */
+async function callGeminiWithRetry(args) {
+  const first = await callGemini(args);
+  if (first.ok || first.status !== 429) return first;
+
+  await new Promise(r => setTimeout(r, 1500));
+  return callGemini(args);
+}
+
 async function callAnthropic({ apiKey, userContent, n, diffDesc }) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -309,10 +330,20 @@ export async function POST(req) {
 
   try {
     const result = geminiKey
-      ? await callGemini({ apiKey: geminiKey, userContent, n, diffDesc })
+      ? await callGeminiWithRetry({ apiKey: geminiKey, userContent, n, diffDesc })
       : await callAnthropic({ apiKey: anthropicKey, userContent, n, diffDesc });
 
     if (!result.ok) {
+      // A quota error is worth naming honestly. "Something went wrong" invites
+      // the user to retry immediately, which is the one thing that cannot work.
+      if (result.status === 429) {
+        return json(
+          { error: "Everyone's generating at once right now. Give it a minute and try again." },
+          429,
+          origin,
+        );
+      }
+
       // Never leak upstream account details to the client. An upstream 401/403
       // is our misconfiguration, not the caller's, so it surfaces as a 500.
       const upstreamAuthFailed = result.status === 401 || result.status === 403;
