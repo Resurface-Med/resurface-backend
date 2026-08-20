@@ -1,20 +1,8 @@
-// Question generation. Holds the model API key so it never reaches a browser.
-//
-// The system prompt is built here rather than accepted from the client, so this
-// endpoint can only ever produce MBChB multiple-choice questions — it cannot be
-// repurposed as a free general-purpose model proxy.
-//
-// Two providers live here on purpose. The client's request shape does not
-// change when the provider does, and which one runs is decided by which key is
-// present, so the cutover is an environment variable rather than a deploy:
-// set GEMINI_API_KEY and generation moves to Gemini; unset it and it is back on
-// Anthropic in the time it takes Vercel to redeploy. That matters because this
-// endpoint is the one part of the app that costs money per use, and the ability
-// to fall back without shipping code is worth one branch.
-
-import { createClient } from "@supabase/supabase-js";
+import { allowedOrigin, json, preflight, rateLimited, verify } from "../../../lib/http.js";
+import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 
 const MAX_COUNT = 20;
+const MAX_PER_WINDOW = 10;
 
 // Flash-Lite, and the free tier's shape is the reason rather than the model's.
 // Every full Flash model — 3, 3.5, 3.6, 3.7 — is capped at 20 requests a day
@@ -29,89 +17,12 @@ const MAX_COUNT = 20;
 // stops mattering, paid keys are not queued behind the free tier, and it costs
 // about $0.02 a lecture.
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
-const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 const DIFF_DESC = {
   easy:   "direct single-fact recall (where/what/which enzyme)",
   medium: "mechanism/application (why does X, what happens if Y inhibited)",
   hard:   "clinical vignette — every question must open with a patient scenario",
 };
-
-// Best-effort throttle. Serverless instances are recycled, so this caps runaway
-// loops rather than providing real per-user quotas. Swap for Upstash Redis if
-// the access code ever leaks beyond the group.
-const hits = new Map();
-const WINDOW_MS = 60_000;
-const MAX_PER_WINDOW = 10;
-
-function rateLimited(id) {
-  const now = Date.now();
-  const recent = (hits.get(id) || []).filter(t => now - t < WINDOW_MS);
-  recent.push(now);
-  hits.set(id, recent);
-  return recent.length > MAX_PER_WINDOW;
-}
-
-const DEFAULT_ORIGINS = [
-  "http://localhost:5173",
-  "http://localhost:5174",
-  "https://app.tryresurface.com",
-  "https://tryresurface.com",
-  "https://www.tryresurface.com",
-  // Kept so the vercel.app URL keeps working during the domain cutover.
-  "https://resurface-app-eight.vercel.app",
-].join(",");
-
-function allowedOrigin(origin) {
-  // Union, not override. ALLOWED_ORIGINS used to replace this list, which meant
-  // a stale env var pointing at an old deployment silently blocked the real
-  // domain — the failure looks like a CORS error in someone's browser and
-  // nowhere in the logs. The canonical origins are always allowed; the env var
-  // can only add to them.
-  const fromEnv = (process.env.ALLOWED_ORIGINS || "")
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  const allowed = new Set([...DEFAULT_ORIGINS.split(","), ...fromEnv]);
-  if (!origin) return null;
-  return allowed.has(origin) ? origin : null;
-}
-
-function corsHeaders(origin) {
-  const h = {
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "content-type, authorization",
-    "Access-Control-Max-Age": "86400",
-    Vary: "Origin",
-  };
-  if (origin) h["Access-Control-Allow-Origin"] = origin;
-  return h;
-}
-
-// Same public values the app ships in its bundle: enough to ask Supabase
-// whether a token is valid, and useless for anything else. Defaulting them
-// means a missing env var can't silently turn every request into a 401.
-const DEFAULT_SUPABASE_URL = "https://uhqpljteohitvytwfadp.supabase.co";
-const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_0ZlQhc0Gn_bD5-AFIgPOrw_xKVHv8hJ";
-
-/** Resolves the bearer token to a user, or null. Supabase checks the signature. */
-async function verify(req) {
-  const token = (req.headers.get("authorization") || "").replace(/^Bearer /i, "");
-  if (!token) return null;
-
-  const url = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
-
-  const supabase = createClient(url, anonKey);
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error) console.error("[generate] token rejected:", error.message);
-  return error ? null : data.user;
-}
-
-function json(body, status, origin) {
-  return Response.json(body, { status, headers: corsHeaders(origin) });
-}
 
 function systemPrompt(n, diffDesc) {
   return `MCQ generator for Year 1 MBChB. Output ONLY a JSON array, no markdown.
@@ -177,84 +88,6 @@ function toGeminiInput(userContent) {
   }).filter(Boolean);
 }
 
-/** Pulls the text out of a response, whichever shape the API returned it in. */
-function geminiText(data) {
-  if (typeof data?.output_text === "string" && data.output_text) return data.output_text;
-
-  // Interactions API: walk the steps for text blocks.
-  const fromSteps = (data?.steps || [])
-    .flatMap(s => s?.content || s?.parts || [])
-    .map(c => c?.text)
-    .filter(Boolean)
-    .join("");
-  if (fromSteps) return fromSteps;
-
-  // Classic generateContent shape, in case the endpoint is pointed back at it.
-  return (data?.candidates?.[0]?.content?.parts || [])
-    .map(p => p?.text)
-    .filter(Boolean)
-    .join("");
-}
-
-async function callGemini({ apiKey, userContent, n, diffDesc }) {
-  const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
-
-  const r = await fetch(GEMINI_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": apiKey,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      system_instruction: systemPrompt(n, diffDesc),
-      input: toGeminiInput(userContent),
-      response_format: {
-        type: "text",
-        mime_type: "application/json",
-        schema: QUESTION_SCHEMA,
-      },
-    }),
-  });
-
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    return { ok: false, status: r.status, message: err?.error?.message };
-  }
-
-  return { ok: true, text: geminiText(await r.json()) };
-}
-
-// Worth trying again: the request was fine and the far end was busy. A quota
-// error clears on its own within the minute, and an overloaded model is Google
-// running out of capacity for a popular free-tier model rather than anything
-// about this request.
-const TRANSIENT = new Set([429, 500, 502, 503, 504]);
-
-/**
- * Up to two retries on a transient upstream failure.
- *
- * Both failure modes here are bursty rather than sustained. The free tier's
- * per-minute quota is shared across every user, so it is hit when several
- * people upload at once after the same lecture; model overload comes and goes
- * on Google's side in seconds. Waiting briefly turns most of both into a
- * slightly slower generation instead of an error.
- *
- * Two attempts, backing off, and no more: this runs inside a serverless
- * invocation with its own timeout and the generation itself already takes
- * several seconds.
- */
-async function callGeminiWithRetry(args) {
-  let last = await callGemini(args);
-
-  for (const wait of [1200, 2500]) {
-    if (last.ok || !TRANSIENT.has(last.status)) return last;
-    await new Promise(r => setTimeout(r, wait));
-    last = await callGemini(args);
-  }
-  return last;
-}
-
 async function callAnthropic({ apiKey, userContent, n, diffDesc }) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -286,16 +119,7 @@ async function callAnthropic({ apiKey, userContent, n, diffDesc }) {
  * Anthropic path has no schema and this costs three lines.
  */
 function parseQuestions(text) {
-  const clean = String(text)
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
-
-  let parsed;
-  try { parsed = JSON.parse(clean); }
-  catch { return null; }
-
+  const parsed = parseJson(text);
   const list = Array.isArray(parsed) ? parsed : parsed?.questions;
   if (!Array.isArray(list)) return null;
 
@@ -311,8 +135,7 @@ function parseQuestions(text) {
 }
 
 export async function OPTIONS(req) {
-  const origin = allowedOrigin(req.headers.get("origin"));
-  return new Response(null, { status: 204, headers: corsHeaders(origin) });
+  return preflight(req);
 }
 
 export async function POST(req) {
@@ -331,7 +154,7 @@ export async function POST(req) {
     return json({ error: "Server is missing GEMINI_API_KEY." }, 500, origin);
   }
 
-  if (rateLimited(user.id)) {
+  if (rateLimited("generate", user.id, MAX_PER_WINDOW)) {
     return json({ error: "Slow down — too many generations. Try again in a minute." }, 429, origin);
   }
 
@@ -349,39 +172,16 @@ export async function POST(req) {
 
   try {
     const result = geminiKey
-      ? await callGeminiWithRetry({ apiKey: geminiKey, userContent, n, diffDesc })
+      ? await callGemini({
+          apiKey: geminiKey,
+          model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
+          system: systemPrompt(n, diffDesc),
+          input: toGeminiInput(userContent),
+          schema: QUESTION_SCHEMA,
+        })
       : await callAnthropic({ apiKey: anthropicKey, userContent, n, diffDesc });
 
-    if (!result.ok) {
-      // A quota error is worth naming honestly. "Something went wrong" invites
-      // the user to retry immediately, which is the one thing that cannot work.
-      // Both of these mean "the far end was busy", and neither is the
-      // caller's fault, so say so plainly rather than showing them a status
-      // code and Google's internal model name.
-      if (result.status === 429) {
-        return json(
-          { error: "Everyone's generating at once right now. Give it a minute and try again." },
-          429,
-          origin,
-        );
-      }
-      if (TRANSIENT.has(result.status)) {
-        return json(
-          { error: "The question writer is busy at the moment. It usually clears in a minute — try again." },
-          503,
-          origin,
-        );
-      }
-
-      // Never leak upstream account details to the client. An upstream 401/403
-      // is our misconfiguration, not the caller's, so it surfaces as a 500.
-      const upstreamAuthFailed = result.status === 401 || result.status === 403;
-      return json(
-        { error: upstreamAuthFailed ? "Server API key was rejected." : result.message || `Upstream error ${result.status}` },
-        upstreamAuthFailed ? 500 : result.status,
-        origin,
-      );
-    }
+    if (!result.ok) return upstreamError(result, origin, json, "generating");
 
     const questions = parseQuestions(result.text);
     if (!questions) {
