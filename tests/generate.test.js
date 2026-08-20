@@ -281,9 +281,9 @@ describe("free-tier quota handling", () => {
     expect(body.error).toMatch(/generating at once/i);
   });
 
-  it("defaults to the free tier model with a usable daily quota", async () => {
+  it("sends the configured default model", async () => {
     const f = geminiReturns({ output_text: JSON.stringify({ questions: ONE_Q }) });
     await POST(req());
-    expect(JSON.parse(f.mock.calls[0][1].body).model).toBe("gemini-3.5-flash-lite");
+    expect(JSON.parse(f.mock.calls[0][1].body).model).toBe("gemini-3.7-flash");
   });
 });
