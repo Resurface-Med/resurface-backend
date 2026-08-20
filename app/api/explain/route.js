@@ -19,13 +19,11 @@ const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 // mid-session, often twice in a row on the same question.
 const MAX_PER_WINDOW = 20;
 
-const SYSTEM = `You are helping a Year 1 medical student who has just missed a multiple-choice question.
-Address the specific mix-up their choice implies — do not restate the bank explanation louder.
-Each field is short enough to read in one glance:
-- why_wrong: at most two sentences. Name the trap.
-- why_right: at most two sentences. Name the mechanism, structure, or value.
-- remember: one exam-ready line, under 16 words.
-No preamble, no encouragement, no recap of the stem.
+const SYSTEM = `You are helping a Year 1 medical student who has just answered a multiple-choice question incorrectly.
+They chose one option. Explain, in plain English, why the thing they were probably thinking is wrong, then why the correct answer is right.
+Address the specific confusion their choice implies — do not simply restate the model answer.
+Be concrete: name the mechanism, the structure, the value. Teach enough that they would get the next one right — a short paragraph per field is fine; a slogan is not.
+Do not be encouraging or apologetic. No preamble. Do not recap the stem.
 Write chemistry and maths in plain Unicode (ΔG, Na⁺, Ca²⁺, →). Never LaTeX, never $…$, never markdown.`;
 
 const SCHEMA = {
