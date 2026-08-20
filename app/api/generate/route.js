@@ -16,15 +16,19 @@ import { createClient } from "@supabase/supabase-js";
 
 const MAX_COUNT = 20;
 
-// TEMPORARY — for comparing question quality against Flash-Lite.
+// Flash-Lite, and the free tier's shape is the reason rather than the model's.
+// Every full Flash model — 3, 3.5, 3.6, 3.7 — is capped at 20 requests a day
+// on a free key, which across a hundred users is one lecture each per five
+// days. Flash-Lite gets 500 a day and 15 a minute for the same nothing.
 //
-// This is capped at 20 requests a day on a free key, which is fine for one
-// person testing and unusable for a cohort: a hundred users would get one
-// lecture each per five days. Flash-Lite is the model to ship on while the
-// tier is free — 500 a day, 15 a minute — so put this back to
-// gemini-3.5-flash-lite once the comparison is done, or switch on billing,
-// after which the quota stops mattering and this becomes the right default.
-const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
+// The newest models are also the most contended on the free tier: 3.7 Flash
+// returned "experiencing high demand" while Flash-Lite was answering normally
+// in the same minutes. Fewer people queue for the smaller model.
+//
+// If billing is ever switched on, GEMINI_MODEL=gemini-3.7-flash: the quota
+// stops mattering, paid keys are not queued behind the free tier, and it costs
+// about $0.02 a lecture.
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 const DIFF_DESC = {
