@@ -77,6 +77,7 @@ describe("what the model is told", () => {
     await POST(req());
     const sent = JSON.parse(f.mock.calls[0][1].body);
     expect(Object.keys(sent.response_format.schema.properties)).toEqual(["why_wrong", "why_right", "remember"]);
+    expect(sent.generation_config.thinking_level).toBe("minimal");
   });
 });
 
@@ -127,8 +128,10 @@ describe("follow-ups", () => {
 
     const sent = JSON.parse(f.mock.calls[0][1].body);
     expect(sent.response_format).toBeUndefined();
-    expect(sent.generation_config.max_output_tokens).toBe(160);
+    expect(sent.generation_config.max_output_tokens).toBe(120);
+    expect(sent.generation_config.thinking_level).toBe("minimal");
     expect(sent.input[0].text).toContain("Student follow-up: Explain that more simply");
+    expect(sent.input[0].text).not.toContain("The explanation they already read");
   });
 
   it("includes prior turns in the prompt", async () => {

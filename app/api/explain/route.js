@@ -76,7 +76,10 @@ export async function POST(req) {
     return json({ error: "Nothing to explain." }, 400, origin);
   }
 
-  const ctx = buildContext({ question, options, correct: ci, picked: pi, explanation });
+  const ctx = buildContext(
+    { question, options, correct: ci, picked: pi, explanation },
+    { compact: typeof message === "string" && Boolean(message.trim()) },
+  );
 
   if (typeof message === "string" && message.trim()) {
     return followUp({ origin, apiKey, ctx, message: message.trim(), history });
@@ -91,6 +94,9 @@ export async function POST(req) {
       system: SYSTEM,
       input,
       schema: SCHEMA,
+      maxOutputTokens: 280,
+      thinkingLevel: "minimal",
+      fast: true,
     });
 
     if (!result.ok) return upstreamError(result, origin, json, "asking for help");
@@ -110,7 +116,7 @@ export async function POST(req) {
   }
 }
 
-function buildContext({ question, options, correct, picked, explanation }) {
+function buildContext({ question, options, correct, picked, explanation }, { compact = false } = {}) {
   const chose = Number.isInteger(picked) && options[picked]
     ? `They chose: ${options[picked]}`
     : "They did not answer in time.";
@@ -120,7 +126,9 @@ function buildContext({ question, options, correct, picked, explanation }) {
     `Options: ${options.map((o, i) => `${"ABCDE"[i]}. ${o}`).join(" | ")}`,
     `Correct answer: ${options[correct]}`,
     chose,
-    explanation ? `The explanation they already read: ${explanation}` : null,
+    // Follow-ups already sit next to the bank explanation on screen — repeating
+    // it here just burns tokens and time for no new information.
+    !compact && explanation ? `The explanation they already read: ${explanation}` : null,
   ].filter(Boolean).join("\n");
 }
 
@@ -142,7 +150,7 @@ async function followUp({ origin, apiKey, ctx, message, history }) {
     return json({ error: "Keep follow-ups under 500 characters." }, 400, origin);
   }
 
-  const turns = Array.isArray(history) ? history.slice(-12) : [];
+  const turns = Array.isArray(history) ? history.slice(-4) : [];
   const transcript = turns
     .filter(t => t && (t.role === "user" || t.role === "assistant") && typeof t.text === "string")
     .map(t => `${t.role === "user" ? "Student" : "Tutor"}: ${t.text.trim()}`)
@@ -163,7 +171,9 @@ async function followUp({ origin, apiKey, ctx, message, history }) {
       model: process.env.GEMINI_EXPLAIN_MODEL || DEFAULT_MODEL,
       system: FOLLOW_UP_SYSTEM,
       input,
-      maxOutputTokens: 160,
+      maxOutputTokens: 120,
+      thinkingLevel: "minimal",
+      fast: true,
     });
 
     if (!result.ok) return upstreamError(result, origin, json, "asking for help");
