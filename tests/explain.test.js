@@ -115,3 +115,42 @@ describe("responses", () => {
     expect((await res.json()).error).not.toContain("AIza");
   });
 });
+
+describe("follow-ups", () => {
+  it("returns plain text when a message is sent", async () => {
+    const f = returns({ output_text: "Gi lowers cAMP via inhibition." });
+    const res = await POST(req({
+      body: { ...QUESTION, message: "Explain that more simply" },
+    }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ reply: "Gi lowers cAMP via inhibition." });
+
+    const sent = JSON.parse(f.mock.calls[0][1].body);
+    expect(sent.response_format).toBeUndefined();
+    expect(sent.input[0].text).toContain("Student follow-up: Explain that more simply");
+  });
+
+  it("includes prior turns in the prompt", async () => {
+    const f = returns({ output_text: "Still Gs." });
+    await POST(req({
+      body: {
+        ...QUESTION,
+        message: "And the other options?",
+        history: [
+          { role: "user", text: "Why Gi?" },
+          { role: "assistant", text: "Gi lowers cAMP." },
+        ],
+      },
+    }));
+    const sent = JSON.parse(f.mock.calls[0][1].body);
+    expect(sent.input[0].text).toContain("Student: Why Gi?");
+    expect(sent.input[0].text).toContain("Tutor: Gi lowers cAMP.");
+  });
+
+  it("rejects very long follow-ups", async () => {
+    const res = await POST(req({
+      body: { ...QUESTION, message: "x".repeat(501) },
+    }));
+    expect(res.status).toBe(400);
+  });
+});

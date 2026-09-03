@@ -62,7 +62,7 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { question, options, correct, picked, explanation } = body || {};
+  const { question, options, correct, picked, explanation, message, history } = body || {};
   if (typeof question !== "string" || !Array.isArray(options) || options.length === 0) {
     return json({ error: "Nothing to explain." }, 400, origin);
   }
@@ -76,22 +76,13 @@ export async function POST(req) {
     return json({ error: "Nothing to explain." }, 400, origin);
   }
 
-  // The whole point: the model is told what they picked. Without it this is
-  // just the same explanation again in different words.
-  const chose = Number.isInteger(pi) && options[pi]
-    ? `They chose: ${options[pi]}`
-    : "They did not answer in time.";
+  const ctx = buildContext({ question, options, correct: ci, picked: pi, explanation });
 
-  const input = [{
-    type: "text",
-    text: [
-      `Question: ${question}`,
-      `Options: ${options.map((o, i) => `${"ABCDE"[i]}. ${o}`).join(" | ")}`,
-      `Correct answer: ${options[ci]}`,
-      chose,
-      explanation ? `The explanation they already read: ${explanation}` : null,
-    ].filter(Boolean).join("\n"),
-  }];
+  if (typeof message === "string" && message.trim()) {
+    return followUp({ origin, apiKey, ctx, message: message.trim(), history });
+  }
+
+  const input = [{ type: "text", text: ctx }];
 
   try {
     const result = await callGemini({
@@ -114,6 +105,65 @@ export async function POST(req) {
       whyRight: parsed.why_right,
       remember: parsed.remember || "",
     }, 200, origin);
+  } catch (e) {
+    return json({ error: e.message || "Explanation failed." }, 500, origin);
+  }
+}
+
+function buildContext({ question, options, correct, picked, explanation }) {
+  const chose = Number.isInteger(picked) && options[picked]
+    ? `They chose: ${options[picked]}`
+    : "They did not answer in time.";
+
+  return [
+    `Question: ${question}`,
+    `Options: ${options.map((o, i) => `${"ABCDE"[i]}. ${o}`).join(" | ")}`,
+    `Correct answer: ${options[correct]}`,
+    chose,
+    explanation ? `The explanation they already read: ${explanation}` : null,
+  ].filter(Boolean).join("\n");
+}
+
+const FOLLOW_UP_SYSTEM = `You are Resurface AI, a tutor helping a Year 1 medical student who got a multiple-choice question wrong.
+They can see the question, what they picked, and your earlier explanation. Answer follow-ups briefly and concretely — name mechanisms, structures, values.
+Do not be encouraging or apologetic. No preamble. Plain Unicode for chemistry (ΔG, Na⁺, →). Never LaTeX, never $…$, never markdown.`;
+
+async function followUp({ origin, apiKey, ctx, message, history }) {
+  if (message.length > 500) {
+    return json({ error: "Keep follow-ups under 500 characters." }, 400, origin);
+  }
+
+  const turns = Array.isArray(history) ? history.slice(-12) : [];
+  const transcript = turns
+    .filter(t => t && (t.role === "user" || t.role === "assistant") && typeof t.text === "string")
+    .map(t => `${t.role === "user" ? "Student" : "Tutor"}: ${t.text.trim()}`)
+    .join("\n\n");
+
+  const input = [{
+    type: "text",
+    text: [
+      ctx,
+      transcript ? `Conversation so far:\n${transcript}` : null,
+      `Student follow-up: ${message}`,
+    ].filter(Boolean).join("\n\n"),
+  }];
+
+  try {
+    const result = await callGemini({
+      apiKey,
+      model: process.env.GEMINI_EXPLAIN_MODEL || DEFAULT_MODEL,
+      system: FOLLOW_UP_SYSTEM,
+      input,
+    });
+
+    if (!result.ok) return upstreamError(result, origin, json, "asking for help");
+
+    const reply = String(result.text || "").trim();
+    if (!reply) {
+      return json({ error: "Couldn't put that into words. Try again." }, 502, origin);
+    }
+
+    return json({ reply }, 200, origin);
   } catch (e) {
     return json({ error: e.message || "Explanation failed." }, 500, origin);
   }
