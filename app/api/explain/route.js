@@ -17,6 +17,13 @@ const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 
 // Higher than generation's ten. This costs a fraction as much and is asked
 // mid-session, often twice in a row on the same question.
+/**
+ * Shorter than generate on purpose. This runs while a student is looking at a
+ * "Thinking…" line mid-quiz, so it takes one quick retry and then gives up —
+ * a fast failure they can dismiss beats a long one they have to wait out.
+ */
+export const maxDuration = 30;
+
 const MAX_PER_WINDOW = 20;
 
 const SYSTEM = `You are helping a Year 1 medical student who has just answered a multiple-choice question incorrectly.

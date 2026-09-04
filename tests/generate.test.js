@@ -48,7 +48,23 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
+
+/**
+ * Runs a request that will hit the backoff in callGemini.
+ *
+ * The waits are jittered, so a test that actually slept would take a
+ * different, unpredictable few seconds every run — and the give-up path sleeps
+ * long enough to blow vitest's default timeout. Fake timers make the retry
+ * behaviour assertable without waiting for it.
+ */
+async function postThroughRetries(request) {
+  vi.useFakeTimers();
+  const pending = POST(request);
+  await vi.runAllTimersAsync();
+  return pending;
+}
 
 describe("authentication", () => {
   it("rejects an invalid token", async () => {
@@ -268,14 +284,14 @@ describe("free-tier quota handling", () => {
         ? { ok: false, status: 429, json: async () => ({ error: { message: "quota" } }) }
         : { ok: true, status: 200, json: async () => ({ output_text: JSON.stringify({ questions: ONE_Q }) }) };
     });
-    const res = await POST(req());
+    const res = await postThroughRetries(req());
     expect(call).toBe(2);
     expect(res.status).toBe(200);
   });
 
   it("says what actually happened when the retry also fails", async () => {
     geminiReturns({ error: { message: "RESOURCE_EXHAUSTED" } }, false, 429);
-    const res = await POST(req());
+    const res = await postThroughRetries(req());
     const body = await res.json();
     expect(res.status).toBe(429);
     expect(body.error).toMatch(/generating at once/i);
@@ -300,16 +316,32 @@ describe("transient upstream failures", () => {
         ? { ok: false, status: 503, json: async () => ({ error: { message: "overloaded" } }) }
         : { ok: true, status: 200, json: async () => ({ output_text: JSON.stringify({ questions: ONE_Q }) }) };
     });
-    const res = await POST(req());
+    const res = await postThroughRetries(req());
     expect(call).toBe(2);
     expect(res.status).toBe(200);
   });
 
-  it("gives up after three attempts and says the far end was busy", async () => {
+  it("treats a dropped connection as transient and retries it", async () => {
+    // fetch rejecting — a timeout, a reset — used to escape callGemini
+    // entirely and surface as a 500 with no retry at all.
+    let call = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      call += 1;
+      if (call === 1) throw new Error("terminated");
+      return { ok: true, status: 200, json: async () => ({ output_text: JSON.stringify({ questions: ONE_Q }) }) };
+    });
+    const res = await postThroughRetries(req());
+    expect(call).toBe(2);
+    expect(res.status).toBe(200);
+  });
+
+  it("gives up after four attempts and says the far end was busy", async () => {
     const f = geminiReturns({ error: { message: "high demand" } }, false, 503);
-    const res = await POST(req());
+    const res = await postThroughRetries(req());
     const body = await res.json();
-    expect(f).toHaveBeenCalledTimes(3);
+    // One call plus the three backoffs. Raised from three deliberately: the
+    // route now sets its own maxDuration, so there is budget for another try.
+    expect(f).toHaveBeenCalledTimes(4);
     expect(res.status).toBe(503);
     expect(body.error).toMatch(/busy/i);
     expect(body.error).not.toMatch(/gemini/i);

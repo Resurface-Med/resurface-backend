@@ -1,6 +1,16 @@
 import { allowedOrigin, json, preflight, rateLimited, verify } from "../../../lib/http.js";
 import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 
+/**
+ * Set explicitly rather than left to the platform default, because the retries
+ * in callGemini are only real if the function outlives them. Generating twenty
+ * questions is tens of seconds on its own; add three jittered backoffs and the
+ * budget has to be generous or the retry that would have succeeded is killed
+ * mid-wait — which reaches the student as the same error the retry existed to
+ * prevent.
+ */
+export const maxDuration = 60;
+
 const MAX_COUNT = 20;
 const MAX_PER_WINDOW = 10;
 
