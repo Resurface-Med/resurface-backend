@@ -95,7 +95,7 @@ export async function POST(req) {
     const quota = takeQuota("explain-q", `${user.id}:${qKey}`, MAX_ASKS_PER_QUESTION);
     if (!quota.allowed) {
       return json({
-        error: `You've used all ${MAX_ASKS_PER_QUESTION} AI asks on this question.`,
+        error: `You've used all ${MAX_ASKS_PER_QUESTION} AI responses on this question.`,
         remaining: 0,
         limit: MAX_ASKS_PER_QUESTION,
       }, 429, origin);
