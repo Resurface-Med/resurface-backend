@@ -10,7 +10,7 @@
 // lecture's worth of questions is neither, and a burst of one should not leave
 // the other with nothing.
 
-import { allowedOrigin, json, preflight, rateLimited, verify } from "../../../lib/http.js";
+import { allowedOrigin, json, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
 import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
@@ -25,6 +25,8 @@ const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 export const maxDuration = 30;
 
 const MAX_PER_WINDOW = 20;
+/** How many free-text / pill asks a student gets on one bank question. */
+export const MAX_ASKS_PER_QUESTION = 3;
 
 const SYSTEM = `You are helping a Year 1 medical student who has just answered a multiple-choice question incorrectly.
 They chose one option. Explain, in plain English, why the thing they were probably thinking is wrong, then why the correct answer is right.
@@ -69,7 +71,7 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { question, options, correct, picked, explanation, message, history } = body || {};
+  const { question, options, correct, picked, explanation, message, history, questionId } = body || {};
   if (typeof question !== "string" || !Array.isArray(options) || options.length === 0) {
     return json({ error: "Nothing to explain." }, 400, origin);
   }
@@ -89,7 +91,18 @@ export async function POST(req) {
   );
 
   if (typeof message === "string" && message.trim()) {
-    return followUp({ origin, apiKey, ctx, message: message.trim(), history });
+    const qKey = questionKey(questionId, question);
+    const quota = takeQuota("explain-q", `${user.id}:${qKey}`, MAX_ASKS_PER_QUESTION);
+    if (!quota.allowed) {
+      return json({
+        error: `You've used all ${MAX_ASKS_PER_QUESTION} AI asks on this question.`,
+        remaining: 0,
+        limit: MAX_ASKS_PER_QUESTION,
+      }, 429, origin);
+    }
+    return followUp({
+      origin, apiKey, ctx, message: message.trim(), history, remaining: quota.remaining,
+    });
   }
 
   const input = [{ type: "text", text: ctx }];
@@ -152,7 +165,18 @@ Length:
 Simple words. One point. No preamble, no encouragement, no bullet lists.
 Plain Unicode for chemistry (ΔG, Na⁺, →). Never LaTeX, markdown, or $…$.`;
 
-async function followUp({ origin, apiKey, ctx, message, history }) {
+function questionKey(questionId, question) {
+  if (questionId !== undefined && questionId !== null && String(questionId).trim() !== "") {
+    return String(questionId);
+  }
+  // Fallback so omitting questionId cannot open a fresh unlimited bucket.
+  let h = 0;
+  const s = String(question || "");
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return `t:${h}`;
+}
+
+async function followUp({ origin, apiKey, ctx, message, history, remaining }) {
   if (message.length > 500) {
     return json({ error: "Keep follow-ups under 500 characters." }, 400, origin);
   }
@@ -190,7 +214,7 @@ async function followUp({ origin, apiKey, ctx, message, history }) {
       return json({ error: "Couldn't put that into words. Try again." }, 502, origin);
     }
 
-    return json({ reply }, 200, origin);
+    return json({ reply, remaining, limit: MAX_ASKS_PER_QUESTION }, 200, origin);
   } catch (e) {
     return json({ error: e.message || "Explanation failed." }, 500, origin);
   }
