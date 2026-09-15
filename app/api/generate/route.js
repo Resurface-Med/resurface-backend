@@ -79,20 +79,41 @@ const EXEMPLARS = [
   },
 ];
 
+/**
+ * The paper's own proportions: two thirds direct or fact-led, one third
+ * scenario-led. Every difficulty keeps this mix. The first version of the
+ * tiers changed the shape instead — easy meant one-liners, hard meant
+ * scenarios — and that is not what difficulty is: "which complement
+ * components form the MAC?" is a one-liner and brutal, "thyroidectomy, now
+ * hoarse" is a scenario and a gift. Difficulty is how far the answer sits
+ * from the slide, and how close the distractors sit to the answer.
+ */
+const SHAPE = "per 6 questions: 2 single direct questions (exemplars 1, 5), 2 fact-then-question (exemplars 2, 3), 2 scenario-then-question (exemplar 4). Interleave the shapes; never two scenarios in a row";
+
+// Mixed says nothing about difficulty on purpose: the paper's spread is what
+// the model produces when left alone with the exemplars, and that output was
+// judged right. The tiers add a contract on top; the prompt is otherwise the
+// same bytes.
 const DIFF_DESC = {
-  easy:   "every stem is a single direct question line with no scenario, like exemplars 1 and 5",
-  medium: "every stem opens with a fact, mechanism or piece of data, then asks one question about it, like exemplars 2 and 3",
-  hard:   "every stem opens with a one- or two-sentence scenario (a patient, an experiment, a finding), then asks one question, like exemplar 4; the answer needs two steps of reasoning",
-  // The paper's own proportions: two thirds direct or fact-led, one third
-  // scenario-led, with the statement-list shape appearing about once in six.
-  mixed:  "per 6 questions: 2 single direct questions (exemplars 1, 5), 2 fact-then-question (exemplars 2, 3), 2 scenario-then-question (exemplar 4). Interleave the shapes; never two scenarios in a row",
+  mixed: "",
+  easy: `EASY, every question.
+- The correct answer is a name or term that appears verbatim on a slide, one step from the question.
+- The four distractors are from the lecture but from plainly different categories (a nerve against a cartilage, a muscle, a vessel). A student who read the slides once should get it.
+- No data to interpret. A scenario, where the shape calls for one, states the finding outright rather than requiring a diagnosis first.`,
+  medium: `MEDIUM, every question — the level of the paper's typical question.
+- The answer requires applying one fact from the slides: what a structure supplies, what a step produces, what is lost when one thing fails. Recognising a name is not enough.
+- The four distractors are the same category as the answer (the other nerves, the other enzymes), all from the lecture.`,
+  hard: `HARD, every question.
+- The answer requires joining two facts from the material (structure → its supply → what a lesion produces), or interpreting a value or scenario before the fact can be applied.
+- The four distractors are the closest neighbours the lecture offers — the adjacent structure, the paired nerve, the next step in the pathway — so that recognising the topic is not enough to answer.
+- Still answerable from the material alone. Never import outside knowledge to make it harder.`,
 };
 const DEFAULT_DIFFICULTY = "mixed";
 
 function systemPrompt(n, diffDesc) {
   return `You write single-best-answer questions for a Year 1 MBChB exam, in the exact style of the university's own papers. Output ONLY JSON matching the schema.
 
-Write ${n} questions. Shape: ${diffDesc}.
+Write ${n} questions. Shape: ${SHAPE}.${diffDesc ? `\n\nDIFFICULTY\n${diffDesc}` : ""}
 
 GROUNDING — the reason this exists
 - Every question is answerable from the uploaded material alone. The correct answer must appear in it.
@@ -281,7 +302,7 @@ export async function POST(req) {
   }
 
   const n = Math.min(Math.max(parseInt(count) || 5, 1), MAX_COUNT);
-  const diffDesc = DIFF_DESC[difficulty] || DIFF_DESC[DEFAULT_DIFFICULTY];
+  const diffDesc = DIFF_DESC[difficulty] ?? DIFF_DESC[DEFAULT_DIFFICULTY];
 
   try {
     const result = geminiKey
