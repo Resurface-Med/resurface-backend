@@ -11,6 +11,29 @@ import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 export const maxDuration = 120;
 const ATTEMPT_MS = 55_000;
 
+/**
+ * What makes the call fast, as opposed to what stops it hanging.
+ *
+ * Gemini 3.x thinks at "medium" when nothing is said, and thinks longest
+ * over the longest prompt — Harder's, with its rule set, kept it reasoning
+ * for the whole minute before it wrote a token. Standard has never set
+ * this and its output was judged right, so Standard's request stays as it
+ * was; Harder gets "low", which is enough to pick the nearest distractor
+ * with four worked examples in front of it and is not enough to sit and
+ * deliberate.
+ *
+ * The output cap is the other half. Without one a small model that starts
+ * repeating inside a JSON array runs until Google's own limit, which from
+ * here looks like a hang. A question is ~300 tokens with its explanations;
+ * 600 each plus headroom is never reached by a set that is going well and
+ * ends one that is not. Thinking tokens count against the same cap, which
+ * is why it is only set where the thinking level is known: Standard's
+ * medium thinking has no fixed size and a cap could cut its answer off.
+ */
+const HARDER_THINKING = "low";
+const HARDER_TOKENS_PER_QUESTION = 600;
+const HARDER_HEADROOM = 4000;
+
 const MAX_COUNT = 20;
 const MAX_PER_WINDOW = 10;
 
@@ -350,6 +373,7 @@ export async function POST(req) {
 
   try {
     const input = toGeminiInput(userContent);
+    const started = Date.now();
     const result = geminiKey
       ? await callGemini({
           apiKey: geminiKey,
@@ -357,10 +381,17 @@ export async function POST(req) {
           system: systemPrompt(n, harder === true),
           input,
           schema: QUESTION_SCHEMA,
+          ...(harder === true && {
+            thinkingLevel: HARDER_THINKING,
+            maxOutputTokens: n * HARDER_TOKENS_PER_QUESTION + HARDER_HEADROOM,
+          }),
           timeoutMs: ATTEMPT_MS,
         })
       : await callAnthropic({ apiKey: anthropicKey, userContent, n, harder: harder === true });
 
+    // One line per call so the next slow one can be read off the logs
+    // rather than reasoned about.
+    console.log(`generate n=${n} harder=${harder === true} ${result.ok ? "ok" : result.status} ${Date.now() - started}ms`);
     if (!result.ok) return upstreamError(result, origin, json, "generating");
 
     const questions = parseQuestions(result.text);
