@@ -4,12 +4,12 @@ import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 /**
  * Set explicitly rather than left to the platform default, because the retries
  * in callGemini are only real if the function outlives them. Generating twenty
- * questions is tens of seconds on its own; add three jittered backoffs and the
- * budget has to be generous or the retry that would have succeeded is killed
- * mid-wait — which reaches the student as the same error the retry existed to
- * prevent.
+ * questions is tens of seconds on its own — Harder, with twice the prompt and
+ * a reason written for every wrong option, went past 60 and was killed — so
+ * the budget is two attempts of ATTEMPT_MS plus the backoff between them.
  */
-export const maxDuration = 60;
+export const maxDuration = 120;
+const ATTEMPT_MS = 55_000;
 
 const MAX_COUNT = 20;
 const MAX_PER_WINDOW = 10;
@@ -139,29 +139,29 @@ const HARD_EXEMPLARS = [
     q: "A patient had a thyroidectomy last week and now has a hoarse voice. Which one of the following structures is most likely to have been injured?",
     opts: ["Ansa cervicalis", "External laryngeal nerve", "Internal laryngeal nerve", "Phrenic nerve", "Recurrent laryngeal nerve"],
     ans: 4,
-    exp: "The recurrent laryngeal nerve runs in the tracheo-oesophageal groove directly behind the thyroid lobes and supplies every intrinsic laryngeal muscle except cricothyroid. Unilateral injury paralyses one vocal fold, giving a hoarse, breathy voice.",
-    optExp: ["The strap muscles it supplies are divided in the approach, but they do not move the vocal folds and their loss does not alter the voice.", "It is also at risk, beside the superior thyroid artery, but it supplies only cricothyroid, so its loss weakens pitch rather than causing hoarseness.", "It is sensory to the supraglottic larynx; injury causes aspiration, not a change in voice.", "It lies on scalenus anterior, lateral to the field; injury affects the diaphragm, not the larynx.", ""],
+    exp: "The recurrent laryngeal nerve runs in the tracheo-oesophageal groove behind the thyroid lobes and supplies every intrinsic laryngeal muscle except cricothyroid. Unilateral injury paralyses one vocal fold, giving a hoarse voice.",
+    optExp: ["Divided in the approach, but the strap muscles do not move the vocal folds.", "Also at risk beside the superior thyroid artery, but it supplies only cricothyroid, so pitch weakens rather than the voice going hoarse.", "Sensory to the supraglottic larynx; injury causes aspiration, not hoarseness.", "Lies on scalenus anterior, lateral to the field; injury affects the diaphragm.", ""],
   },
   {
     q: "Which of the following lymph nodes are found at the carina?",
     opts: ["Axillary", "Bronchomediastinal", "Bronchopulmonary", "Pulmonary", "Tracheobronchial"],
     ans: 4,
     exp: "The tracheobronchial nodes sit around the bifurcation of the trachea and receive lymph from the bronchopulmonary nodes of both lungs. They drain on to the bronchomediastinal trunks.",
-    optExp: ["They drain the upper limb and breast, and a student reaching for a familiar node group may pick them.", "They lie higher, along the trachea, and receive from the tracheobronchial nodes rather than sitting at the carina.", "They are the hilar nodes, one station distal to the carina, and are the most tempting because they are the next group in the chain.", "They lie within the lung along the bronchi, two stations distal to the carina.", ""],
+    optExp: ["A familiar node group, but it drains the upper limb and breast.", "Lies higher along the trachea and receives from the tracheobronchial nodes.", "The next station in the chain, but at the hilum, not the carina.", "Within the lung along the bronchi, two stations distal.", ""],
   },
   {
     q: "Which of the following would occur if a neuron was exposed to a two-pore potassium channel blocker?",
     opts: ["Absolute refractory period would shorten", "Delayed repolarisation following action potential", "Inability to trigger action potential", "Resting membrane potential would depolarise", "Resting membrane potential would hyperpolarise"],
     ans: 3,
     exp: "Two-pore domain potassium channels carry the resting potassium leak that holds the membrane near the potassium equilibrium potential. Blocking the leak lets the membrane drift towards the sodium equilibrium potential, so it depolarises.",
-    optExp: ["The refractory period is set by voltage-gated sodium channel inactivation, which leak channels do not affect.", "Repolarisation is carried by voltage-gated potassium channels, a different family, so it proceeds normally — the tempting error is treating all potassium channels as one.", "A depolarised membrane is closer to threshold, not further from it.", "Hyperpolarisation would need more potassium efflux, and blocking the leak gives less.", ""],
+    optExp: ["The refractory period is set by sodium channel inactivation, not the leak.", "Tempting if all potassium channels are treated as one, but repolarisation uses voltage-gated channels, a different family.", "A depolarised membrane is nearer threshold, not further from it.", "Hyperpolarisation would need more potassium efflux; blocking the leak gives less.", ""],
   },
   {
     q: "An individual has arterial hypoxaemia; PaO2 = 50 mmHg (normal 75–100 mmHg). Which possible cause of this hypoxaemia would cause the largest elevation in arterial PCO2?",
     opts: ["Diffusion impairment", "High altitude", "Hypoventilation", "Physiological shunt", "Pulmonary embolism"],
     ans: 2,
     exp: "Alveolar ventilation determines PaCO2 directly, so hypoventilation is the only cause of hypoxaemia that raises PaCO2 in step with the fall in PaO2. Every other mechanism leaves ventilation intact or increased.",
-    optExp: ["CO2 diffuses about twenty times more readily than O2, so a diffusion barrier lowers PaO2 while PaCO2 stays normal.", "Hypoxic drive raises ventilation, so PaCO2 falls.", "The ventilated units compensate for CO2, so PaCO2 is normal or low even when PaO2 cannot be corrected — the tempting error is assuming shunt affects both gases equally.", "Embolism causes hyperventilation and a low PaCO2.", ""],
+    optExp: ["CO2 diffuses twenty times more readily than O2, so PaCO2 stays normal.", "Hypoxic drive raises ventilation, so PaCO2 falls.", "Tempting because shunt seems to affect both gases, but ventilated units clear the CO2.", "Embolism causes hyperventilation and a low PaCO2.", ""],
   },
 ];
 
@@ -181,7 +181,7 @@ STEM
 - The stem must not contain the word that names the answer.
 
 EXPLANATIONS
-- optExp: for each wrong option, one sentence that first says why a student would pick it and then why it is wrong. If you cannot say why it would be picked, it is not close enough — choose another option from the material.
+- optExp: for each wrong option, one short sentence: why a student would pick it, then why it is wrong. If you cannot say why it would be picked, it is not close enough — choose another option from the material. Keep every explanation as short as the exemplars'.
 
 HARD EXEMPLARS — real questions from the paper at this level. Match them:
 ${JSON.stringify(HARD_EXEMPLARS)}`;
@@ -357,6 +357,7 @@ export async function POST(req) {
           system: systemPrompt(n, harder === true),
           input,
           schema: QUESTION_SCHEMA,
+          timeoutMs: ATTEMPT_MS,
         })
       : await callAnthropic({ apiKey: anthropicKey, userContent, n, harder: harder === true });
 
