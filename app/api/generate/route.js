@@ -29,15 +29,25 @@ const MAX_PER_WINDOW = 10;
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 
 const DIFF_DESC = {
-  easy:   "direct single-fact recall (where/what/which enzyme)",
-  medium: "mechanism/application (why does X, what happens if Y inhibited)",
-  hard:   "clinical vignette — every question must open with a patient scenario",
+  easy:   "all direct single-fact recall (where/what/which enzyme)",
+  medium: "all mechanism/application (why does X, what happens if Y inhibited)",
+  hard:   "all clinical vignette — each opens with a short patient scenario",
+  // What an exam actually is. Two recall, two mechanism, one vignette per five,
+  // so a set of twenty reads like a paper and not like twenty of one thing.
+  mixed:  "a spread — for every 5 questions: 2 single-fact recall, 2 mechanism/application, 1 short clinical vignette. Interleave them; do not group by type",
 };
+const DEFAULT_DIFFICULTY = "mixed";
 
+// The bank the students already know has 7-word stems and 4-word options.
+// Nothing here said so, and the model wrote paragraphs at every difficulty —
+// "equal length" alone it satisfied by making all five options long. Word
+// caps rather than adjectives, so there is something to hold it to.
 function systemPrompt(n, diffDesc) {
   return `MCQ generator for Year 1 MBChB. Output ONLY a JSON array, no markdown.
 Rules: ${n} questions, 5 opts each, difficulty=${diffDesc}.
-Options: all 5 must be equal length (±3 words), parallel grammar, plausible distractors.
+Length is strict: recall/mechanism stems ≤ 20 words, one sentence. Vignette stems ≤ 40 words, at most 2 sentences, then one direct question. Options ≤ 8 words each, no full sentences, no "all of the above".
+Options: all 5 must be equal length (±2 words), parallel grammar, plausible distractors.
+Ask one thing per question. No preamble ("In the context of…"), no restating the lecture.
 exp=2 sentences why correct. optExp=1 sentence why each wrong opt is wrong (empty string at ans index).
 Vary ans position. Schema: [{"q":"...","opts":[...],"ans":N,"exp":"...","optExp":[...]}]`;
 }
@@ -172,13 +182,13 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { userContent, difficulty = "medium", count = 5 } = body || {};
+  const { userContent, difficulty = DEFAULT_DIFFICULTY, count = 5 } = body || {};
   if (!Array.isArray(userContent) || userContent.length === 0) {
     return json({ error: "No content to generate from." }, 400, origin);
   }
 
   const n = Math.min(Math.max(parseInt(count) || 5, 1), MAX_COUNT);
-  const diffDesc = DIFF_DESC[difficulty] || DIFF_DESC.medium;
+  const diffDesc = DIFF_DESC[difficulty] || DIFF_DESC[DEFAULT_DIFFICULTY];
 
   try {
     const result = geminiKey
