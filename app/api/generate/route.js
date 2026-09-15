@@ -7,9 +7,9 @@ import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
  * questions is tens of seconds on its own; add three jittered backoffs and the
  * budget has to be generous or the retry that would have succeeded is killed
  * mid-wait — which reaches the student as the same error the retry existed to
- * prevent.
+ * prevent. Harder is a second full call on top, so the budget is two of them.
  */
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const MAX_COUNT = 20;
 const MAX_PER_WINDOW = 10;
@@ -81,39 +81,19 @@ const EXEMPLARS = [
 
 /**
  * The paper's own proportions: two thirds direct or fact-led, one third
- * scenario-led. Every difficulty keeps this mix. The first version of the
- * tiers changed the shape instead — easy meant one-liners, hard meant
- * scenarios — and that is not what difficulty is: "which complement
- * components form the MAC?" is a one-liner and brutal, "thyroidectomy, now
- * hoarse" is a scenario and a gift. Difficulty is how far the answer sits
- * from the slide, and how close the distractors sit to the answer.
+ * scenario-led. There is one shape and no difficulty tiers. The tiers were
+ * tried twice — first as different shapes, then as a written contract about
+ * distractors — and both times Flash-Lite answered "harder" with longer
+ * stems. Difficulty in an SBA is distractors that are each defensible for a
+ * sentence, and that is a rewrite job, not a generation instruction: see
+ * HARDEN below.
  */
 const SHAPE = "per 6 questions: 2 single direct questions (exemplars 1, 5), 2 fact-then-question (exemplars 2, 3), 2 scenario-then-question (exemplar 4). Interleave the shapes; never two scenarios in a row";
 
-// Mixed says nothing about difficulty on purpose: the paper's spread is what
-// the model produces when left alone with the exemplars, and that output was
-// judged right. The tiers add a contract on top; the prompt is otherwise the
-// same bytes.
-const DIFF_DESC = {
-  mixed: "",
-  easy: `EASY, every question.
-- The correct answer is a name or term that appears verbatim on a slide, one step from the question.
-- The four distractors are from the lecture but from plainly different categories (a nerve against a cartilage, a muscle, a vessel). A student who read the slides once should get it.
-- No data to interpret. A scenario, where the shape calls for one, states the finding outright rather than requiring a diagnosis first.`,
-  medium: `MEDIUM, every question — the level of the paper's typical question.
-- The answer requires applying one fact from the slides: what a structure supplies, what a step produces, what is lost when one thing fails. Recognising a name is not enough.
-- The four distractors are the same category as the answer (the other nerves, the other enzymes), all from the lecture.`,
-  hard: `HARD, every question.
-- The answer requires joining two facts from the material (structure → its supply → what a lesion produces), or interpreting a value or scenario before the fact can be applied.
-- The four distractors are the closest neighbours the lecture offers — the adjacent structure, the paired nerve, the next step in the pathway — so that recognising the topic is not enough to answer.
-- Still answerable from the material alone. Never import outside knowledge to make it harder.`,
-};
-const DEFAULT_DIFFICULTY = "mixed";
-
-function systemPrompt(n, diffDesc) {
+function systemPrompt(n) {
   return `You write single-best-answer questions for a Year 1 MBChB exam, in the exact style of the university's own papers. Output ONLY JSON matching the schema.
 
-Write ${n} questions. Shape: ${SHAPE}.${diffDesc ? `\n\nDIFFICULTY\n${diffDesc}` : ""}
+Write ${n} questions. Shape: ${SHAPE}.
 
 GROUNDING — the reason this exists
 - Every question is answerable from the uploaded material alone. The correct answer must appear in it.
@@ -141,6 +121,29 @@ UK spelling. SI units. British drug names.
 
 EXEMPLARS — real questions from the university's paper, in the shape you must produce:
 ${JSON.stringify(EXEMPLARS)}`;
+}
+
+/**
+ * Harder is a second pass over a finished set, not a different first pass.
+ * Asked to write hard questions from scratch, the model lengthens stems;
+ * asked to take a good question and swap its two loosest distractors for
+ * the nearest thing the lecture offers, it does the one edit that actually
+ * makes an SBA hard. Stems and answers are kept, so nothing the first pass
+ * got right is put at risk.
+ */
+function hardenPrompt(n) {
+  return `You are editing ${n} finished single-best-answer questions for a Year 1 MBChB exam. The material they were written from is attached. Output ONLY JSON matching the schema: the same ${n} questions, in the same order.
+
+For each question:
+- Keep the stem's meaning and the correct answer text exactly. Do not add words to the stem to make it "harder"; length is not difficulty.
+- Look at the four wrong options. Replace the two weakest — the ones a student could dismiss without knowing the topic — with the nearest neighbour the material offers: the adjacent structure, the paired nerve, the next step in the pathway, the other enzyme in the same reaction. Replace more than two if more than two are weak.
+- Every wrong option must be defensible for one sentence and wrong for one specific reason. If you cannot say why a distractor is tempting, it is not close enough.
+- Where the stem lets a student answer from a keyword alone, make the smallest edit that removes the keyword, and no other edit.
+- Distractors come from the material only. Never import outside knowledge.
+- Options stay terse noun phrases of similar length; the correct one must not stand out.
+- Rewrite optExp for every replaced option, one sentence on why it is wrong; empty string at the answer index. Keep exp unless the stem changed.
+
+Set "ordered": true only if the options form a natural sequence that must keep its order.`;
 }
 
 /**
@@ -200,7 +203,7 @@ function toGeminiInput(userContent) {
   }).filter(Boolean);
 }
 
-async function callAnthropic({ apiKey, userContent, n, diffDesc }) {
+async function callAnthropic({ apiKey, userContent, n }) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -211,7 +214,7 @@ async function callAnthropic({ apiKey, userContent, n, diffDesc }) {
     body: JSON.stringify({
       model: "claude-haiku-4-5",
       max_tokens: 8192,
-      system: systemPrompt(n, diffDesc),
+      system: systemPrompt(n),
       messages: [{ role: "user", content: userContent }],
     }),
   });
@@ -296,30 +299,46 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { userContent, difficulty = DEFAULT_DIFFICULTY, count = 5 } = body || {};
+  const { userContent, count = 5, harder = false } = body || {};
   if (!Array.isArray(userContent) || userContent.length === 0) {
     return json({ error: "No content to generate from." }, 400, origin);
   }
 
   const n = Math.min(Math.max(parseInt(count) || 5, 1), MAX_COUNT);
-  const diffDesc = DIFF_DESC[difficulty] ?? DIFF_DESC[DEFAULT_DIFFICULTY];
+  const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
 
   try {
+    const input = toGeminiInput(userContent);
     const result = geminiKey
       ? await callGemini({
           apiKey: geminiKey,
-          model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
-          system: systemPrompt(n, diffDesc),
-          input: toGeminiInput(userContent),
+          model,
+          system: systemPrompt(n),
+          input,
           schema: QUESTION_SCHEMA,
         })
-      : await callAnthropic({ apiKey: anthropicKey, userContent, n, diffDesc });
+      : await callAnthropic({ apiKey: anthropicKey, userContent, n });
 
     if (!result.ok) return upstreamError(result, origin, json, "generating");
 
-    const questions = parseQuestions(result.text);
+    let questions = parseQuestions(result.text);
     if (!questions) {
       return json({ error: "The model returned invalid JSON. Try again." }, 502, origin);
+    }
+
+    // The second pass sees the material again so the replacement distractors
+    // come from it. A failed second pass returns the standard set rather
+    // than an error: the student asked for questions and has them.
+    if (harder && geminiKey && questions.length) {
+      const hardened = await callGemini({
+        apiKey: geminiKey,
+        model,
+        system: hardenPrompt(questions.length),
+        input: [...input, { type: "text", text: "QUESTIONS:\n" + JSON.stringify(questions) }],
+        schema: QUESTION_SCHEMA,
+      });
+      const edited = hardened.ok ? parseQuestions(hardened.text) : null;
+      if (edited && edited.length === questions.length) questions = edited;
     }
 
     return json({ questions }, 200, origin);
