@@ -79,20 +79,18 @@ const EXEMPLARS = [
   },
 ];
 
-const DIFF_DESC = {
-  easy:   "every stem is a single direct question line with no scenario, like exemplars 1 and 5",
-  medium: "every stem opens with a fact, mechanism or piece of data, then asks one question about it, like exemplars 2 and 3",
-  hard:   "every stem opens with a one- or two-sentence scenario (a patient, an experiment, a finding), then asks one question, like exemplar 4; the answer needs two steps of reasoning",
-  // The paper's own proportions: two thirds direct or fact-led, one third
-  // scenario-led, with the statement-list shape appearing about once in six.
-  mixed:  "per 6 questions: 2 single direct questions (exemplars 1, 5), 2 fact-then-question (exemplars 2, 3), 2 scenario-then-question (exemplar 4). Interleave the shapes; never two scenarios in a row",
-};
-const DEFAULT_DIFFICULTY = "mixed";
+/**
+ * The paper's own proportions: two thirds direct or fact-led, one third
+ * scenario-led. There is no difficulty setting — the paper has none, and
+ * the tiers that existed changed the shape mix, which was the thing that
+ * made the questions read like the paper in the first place.
+ */
+const SHAPE = "per 6 questions: 2 single direct questions (exemplars 1, 5), 2 fact-then-question (exemplars 2, 3), 2 scenario-then-question (exemplar 4). Interleave the shapes; never two scenarios in a row";
 
-function systemPrompt(n, diffDesc) {
+function systemPrompt(n) {
   return `You write single-best-answer questions for a Year 1 MBChB exam, in the exact style of the university's own papers. Output ONLY JSON matching the schema.
 
-Write ${n} questions. Shape: ${diffDesc}.
+Write ${n} questions. Shape: ${SHAPE}.
 
 GROUNDING — the reason this exists
 - Every question is answerable from the uploaded material alone. The correct answer must appear in it.
@@ -179,7 +177,7 @@ function toGeminiInput(userContent) {
   }).filter(Boolean);
 }
 
-async function callAnthropic({ apiKey, userContent, n, diffDesc }) {
+async function callAnthropic({ apiKey, userContent, n }) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -190,7 +188,7 @@ async function callAnthropic({ apiKey, userContent, n, diffDesc }) {
     body: JSON.stringify({
       model: "claude-haiku-4-5",
       max_tokens: 8192,
-      system: systemPrompt(n, diffDesc),
+      system: systemPrompt(n),
       messages: [{ role: "user", content: userContent }],
     }),
   });
@@ -275,24 +273,23 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { userContent, difficulty = DEFAULT_DIFFICULTY, count = 5 } = body || {};
+  const { userContent, count = 5 } = body || {};
   if (!Array.isArray(userContent) || userContent.length === 0) {
     return json({ error: "No content to generate from." }, 400, origin);
   }
 
   const n = Math.min(Math.max(parseInt(count) || 5, 1), MAX_COUNT);
-  const diffDesc = DIFF_DESC[difficulty] || DIFF_DESC[DEFAULT_DIFFICULTY];
 
   try {
     const result = geminiKey
       ? await callGemini({
           apiKey: geminiKey,
           model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
-          system: systemPrompt(n, diffDesc),
+          system: systemPrompt(n),
           input: toGeminiInput(userContent),
           schema: QUESTION_SCHEMA,
         })
-      : await callAnthropic({ apiKey: anthropicKey, userContent, n, diffDesc });
+      : await callAnthropic({ apiKey: anthropicKey, userContent, n });
 
     if (!result.ok) return upstreamError(result, origin, json, "generating");
 
