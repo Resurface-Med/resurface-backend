@@ -7,9 +7,9 @@ import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
  * questions is tens of seconds on its own; add three jittered backoffs and the
  * budget has to be generous or the retry that would have succeeded is killed
  * mid-wait — which reaches the student as the same error the retry existed to
- * prevent. Harder is a second full call on top, so the budget is two of them.
+ * prevent.
  */
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 const MAX_COUNT = 20;
 const MAX_PER_WINDOW = 10;
@@ -81,17 +81,13 @@ const EXEMPLARS = [
 
 /**
  * The paper's own proportions: two thirds direct or fact-led, one third
- * scenario-led. There is one shape and no difficulty tiers. The tiers were
- * tried twice — first as different shapes, then as a written contract about
- * distractors — and both times Flash-Lite answered "harder" with longer
- * stems. Difficulty in an SBA is distractors that are each defensible for a
- * sentence, and that is a rewrite job, not a generation instruction: see
- * HARDEN below.
+ * scenario-led. One shape; Harder keeps it and changes only what the
+ * options are and what the stem asks for.
  */
 const SHAPE = "per 6 questions: 2 single direct questions (exemplars 1, 5), 2 fact-then-question (exemplars 2, 3), 2 scenario-then-question (exemplar 4). Interleave the shapes; never two scenarios in a row";
 
-function systemPrompt(n) {
-  return `You write single-best-answer questions for a Year 1 MBChB exam, in the exact style of the university's own papers. Output ONLY JSON matching the schema.
+function systemPrompt(n, harder = false) {
+  const base = `You write single-best-answer questions for a Year 1 MBChB exam, in the exact style of the university's own papers. Output ONLY JSON matching the schema.
 
 Write ${n} questions. Shape: ${SHAPE}.
 
@@ -121,29 +117,74 @@ UK spelling. SI units. British drug names.
 
 EXEMPLARS — real questions from the university's paper, in the shape you must produce:
 ${JSON.stringify(EXEMPLARS)}`;
+  return harder ? base + hardBlock() : base;
 }
 
 /**
- * Harder is a second pass over a finished set, not a different first pass.
- * Asked to write hard questions from scratch, the model lengthens stems;
- * asked to take a good question and swap its two loosest distractors for
- * the nearest thing the lecture offers, it does the one edit that actually
- * makes an SBA hard. Stems and answers are kept, so nothing the first pass
- * got right is put at risk.
+ * Harder, in one call. Two earlier versions asked for difficulty in prose —
+ * as shapes, then as a contract about distractors — and Flash-Lite answered
+ * both with longer stems. A third ran a second rewrite pass, which worked
+ * but cost two calls against a 500-a-day quota.
+ *
+ * This one gives the model what moved it in the first place: the paper's
+ * own hard questions as exemplars, and rules it can satisfy mechanically
+ * rather than judge. Every option the same kind of thing as the answer;
+ * the stem asks for a relation, never a name; and optExp must say why a
+ * student would pick each wrong option — a model that has to write the
+ * temptation chooses tempting distractors. Appended after the base prompt
+ * so the Standard bytes are untouched.
  */
-function hardenPrompt(n) {
-  return `You are editing ${n} finished single-best-answer questions for a Year 1 MBChB exam. The material they were written from is attached. Output ONLY JSON matching the schema: the same ${n} questions, in the same order.
+const HARD_EXEMPLARS = [
+  {
+    q: "A patient had a thyroidectomy last week and now has a hoarse voice. Which one of the following structures is most likely to have been injured?",
+    opts: ["Ansa cervicalis", "External laryngeal nerve", "Internal laryngeal nerve", "Phrenic nerve", "Recurrent laryngeal nerve"],
+    ans: 4,
+    exp: "The recurrent laryngeal nerve runs in the tracheo-oesophageal groove directly behind the thyroid lobes and supplies every intrinsic laryngeal muscle except cricothyroid. Unilateral injury paralyses one vocal fold, giving a hoarse, breathy voice.",
+    optExp: ["The strap muscles it supplies are divided in the approach, but they do not move the vocal folds and their loss does not alter the voice.", "It is also at risk, beside the superior thyroid artery, but it supplies only cricothyroid, so its loss weakens pitch rather than causing hoarseness.", "It is sensory to the supraglottic larynx; injury causes aspiration, not a change in voice.", "It lies on scalenus anterior, lateral to the field; injury affects the diaphragm, not the larynx.", ""],
+  },
+  {
+    q: "Which of the following lymph nodes are found at the carina?",
+    opts: ["Axillary", "Bronchomediastinal", "Bronchopulmonary", "Pulmonary", "Tracheobronchial"],
+    ans: 4,
+    exp: "The tracheobronchial nodes sit around the bifurcation of the trachea and receive lymph from the bronchopulmonary nodes of both lungs. They drain on to the bronchomediastinal trunks.",
+    optExp: ["They drain the upper limb and breast, and a student reaching for a familiar node group may pick them.", "They lie higher, along the trachea, and receive from the tracheobronchial nodes rather than sitting at the carina.", "They are the hilar nodes, one station distal to the carina, and are the most tempting because they are the next group in the chain.", "They lie within the lung along the bronchi, two stations distal to the carina.", ""],
+  },
+  {
+    q: "Which of the following would occur if a neuron was exposed to a two-pore potassium channel blocker?",
+    opts: ["Absolute refractory period would shorten", "Delayed repolarisation following action potential", "Inability to trigger action potential", "Resting membrane potential would depolarise", "Resting membrane potential would hyperpolarise"],
+    ans: 3,
+    exp: "Two-pore domain potassium channels carry the resting potassium leak that holds the membrane near the potassium equilibrium potential. Blocking the leak lets the membrane drift towards the sodium equilibrium potential, so it depolarises.",
+    optExp: ["The refractory period is set by voltage-gated sodium channel inactivation, which leak channels do not affect.", "Repolarisation is carried by voltage-gated potassium channels, a different family, so it proceeds normally — the tempting error is treating all potassium channels as one.", "A depolarised membrane is closer to threshold, not further from it.", "Hyperpolarisation would need more potassium efflux, and blocking the leak gives less.", ""],
+  },
+  {
+    q: "An individual has arterial hypoxaemia; PaO2 = 50 mmHg (normal 75–100 mmHg). Which possible cause of this hypoxaemia would cause the largest elevation in arterial PCO2?",
+    opts: ["Diffusion impairment", "High altitude", "Hypoventilation", "Physiological shunt", "Pulmonary embolism"],
+    ans: 2,
+    exp: "Alveolar ventilation determines PaCO2 directly, so hypoventilation is the only cause of hypoxaemia that raises PaCO2 in step with the fall in PaO2. Every other mechanism leaves ventilation intact or increased.",
+    optExp: ["CO2 diffuses about twenty times more readily than O2, so a diffusion barrier lowers PaO2 while PaCO2 stays normal.", "Hypoxic drive raises ventilation, so PaCO2 falls.", "The ventilated units compensate for CO2, so PaCO2 is normal or low even when PaO2 cannot be corrected — the tempting error is assuming shunt affects both gases equally.", "Embolism causes hyperventilation and a low PaCO2.", ""],
+  },
+];
 
-For each question:
-- Keep the stem's meaning and the correct answer text exactly. Do not add words to the stem to make it "harder"; length is not difficulty.
-- Look at the four wrong options. Replace the two weakest — the ones a student could dismiss without knowing the topic — with the nearest neighbour the material offers: the adjacent structure, the paired nerve, the next step in the pathway, the other enzyme in the same reaction. Replace more than two if more than two are weak.
-- Every wrong option must be defensible for one sentence and wrong for one specific reason. If you cannot say why a distractor is tempting, it is not close enough.
-- Where the stem lets a student answer from a keyword alone, make the smallest edit that removes the keyword, and no other edit.
-- Distractors come from the material only. Never import outside knowledge.
-- Options stay terse noun phrases of similar length; the correct one must not stand out.
-- Rewrite optExp for every replaced option, one sentence on why it is wrong; empty string at the answer index. Keep exp unless the stem changed.
+function hardBlock() {
+  return `
 
-Set "ordered": true only if the options form a natural sequence that must keep its order.`;
+HARDER — this set is for students who already know the lecture. It overrides anything above that conflicts. Keep the shape mix. Do not lengthen stems: length is not difficulty. Difficulty comes from the options and from what the stem asks.
+
+OPTIONS
+- All five options are the same kind of thing as the answer — five nerves, five cartilages, five enzymes, five cell types, five node groups — and all five are named in the material. A student who has only recognised the topic must be unable to eliminate any of them.
+- Choose the four nearest the answer: the adjacent structure, the paired or opposite nerve, the previous and next step in the pathway, the other members of the same class in the material.
+- The correct answer must not be the most prominent term on its slide, and must not be the longest or most specific option.
+
+STEM
+- Ask for a relation or a consequence, never a name in isolation: what X supplies; what is lost when X is damaged; what lies immediately medial, deep or inferior to X; what a value implies; which is the exception.
+- Where the shape calls for a scenario, give the finding and make the student infer the structure (hoarse voice → the nerve). Never name the structure and ask what it does.
+- The stem must not contain the word that names the answer.
+
+EXPLANATIONS
+- optExp: for each wrong option, one sentence that first says why a student would pick it and then why it is wrong. If you cannot say why it would be picked, it is not close enough — choose another option from the material.
+
+HARD EXEMPLARS — real questions from the paper at this level. Match them:
+${JSON.stringify(HARD_EXEMPLARS)}`;
 }
 
 /**
@@ -203,7 +244,7 @@ function toGeminiInput(userContent) {
   }).filter(Boolean);
 }
 
-async function callAnthropic({ apiKey, userContent, n }) {
+async function callAnthropic({ apiKey, userContent, n, harder }) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -214,7 +255,7 @@ async function callAnthropic({ apiKey, userContent, n }) {
     body: JSON.stringify({
       model: "claude-haiku-4-5",
       max_tokens: 8192,
-      system: systemPrompt(n),
+      system: systemPrompt(n, harder),
       messages: [{ role: "user", content: userContent }],
     }),
   });
@@ -313,32 +354,17 @@ export async function POST(req) {
       ? await callGemini({
           apiKey: geminiKey,
           model,
-          system: systemPrompt(n),
+          system: systemPrompt(n, harder === true),
           input,
           schema: QUESTION_SCHEMA,
         })
-      : await callAnthropic({ apiKey: anthropicKey, userContent, n });
+      : await callAnthropic({ apiKey: anthropicKey, userContent, n, harder: harder === true });
 
     if (!result.ok) return upstreamError(result, origin, json, "generating");
 
-    let questions = parseQuestions(result.text);
+    const questions = parseQuestions(result.text);
     if (!questions) {
       return json({ error: "The model returned invalid JSON. Try again." }, 502, origin);
-    }
-
-    // The second pass sees the material again so the replacement distractors
-    // come from it. A failed second pass returns the standard set rather
-    // than an error: the student asked for questions and has them.
-    if (harder && geminiKey && questions.length) {
-      const hardened = await callGemini({
-        apiKey: geminiKey,
-        model,
-        system: hardenPrompt(questions.length),
-        input: [...input, { type: "text", text: "QUESTIONS:\n" + JSON.stringify(questions) }],
-        schema: QUESTION_SCHEMA,
-      });
-      const edited = hardened.ok ? parseQuestions(hardened.text) : null;
-      if (edited && edited.length === questions.length) questions = edited;
     }
 
     return json({ questions }, 200, origin);
