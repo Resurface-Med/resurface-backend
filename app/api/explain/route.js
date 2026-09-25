@@ -79,18 +79,24 @@ export async function POST(req) {
   // Number(null) is 0, so coercing without checking first would report a
   // timed-out question as though the student had picked option A — and then
   // explain a mistake they never made.
-  const ci = Number(correct);
   const pi = picked === null || picked === undefined ? NaN : Number(picked);
-  if (!Number.isInteger(ci) || !options[ci]) {
+  // The tutor can also be opened mid-question, and is deliberately not sent
+  // the correct option then: there is nothing to validate, and asking for a
+  // key it was never given is the point. Only the structured explain below
+  // needs one.
+  const ci = correct === null || correct === undefined ? NaN : Number(correct);
+  const known = Number.isInteger(ci) && options[ci] !== undefined;
+  const asking = typeof message === "string" && Boolean(message.trim());
+  if (!known && !asking) {
     return json({ error: "Nothing to explain." }, 400, origin);
   }
 
   const ctx = buildContext(
-    { question, options, correct: ci, picked: pi, explanation },
-    { compact: typeof message === "string" && Boolean(message.trim()) },
+    { question, options, correct: known ? ci : null, picked: pi, explanation },
+    { compact: asking },
   );
 
-  if (typeof message === "string" && message.trim()) {
+  if (asking) {
     const qKey = questionKey(questionId, question);
     const quota = takeQuota("explain-q", `${user.id}:${qKey}`, MAX_ASKS_PER_QUESTION);
     if (!quota.allowed) {
