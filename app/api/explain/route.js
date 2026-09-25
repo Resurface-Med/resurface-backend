@@ -137,14 +137,20 @@ export async function POST(req) {
 }
 
 function buildContext({ question, options, correct, picked, explanation }, { compact = false } = {}) {
+  /* The tutor can be opened before the question is answered — it is a
+     companion, not only a post-mortem. In that case the client sends no
+     correct index and no explanation, so the model is not holding the
+     answer and cannot be talked into handing it over. It teaches the
+     topic instead. */
+  const known = Number.isInteger(correct) && options[correct] !== undefined;
   const chose = Number.isInteger(picked) && options[picked]
     ? `They chose: ${options[picked]}`
-    : "They did not answer in time.";
+    : known ? "They did not answer in time." : null;
 
   return [
     `Question: ${question}`,
     `Options: ${options.map((o, i) => `${"ABCDE"[i]}. ${o}`).join(" | ")}`,
-    `Correct answer: ${options[correct]}`,
+    known ? `Correct answer: ${options[correct]}` : "They have NOT answered yet, and you have not been told which option is correct. Teach the underlying idea so they can work it out. Never guess at or state which option is right, and never say which you would pick — if asked, say you are not telling them the answer.",
     chose,
     // Follow-ups already sit next to the bank explanation on screen — repeating
     // it here just burns tokens and time for no new information.
