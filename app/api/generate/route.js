@@ -1,4 +1,4 @@
-import { allowedOrigin, json, preflight, rateLimited, verify } from "../../../lib/http.js";
+import { allowedOrigin, bearer, json, logUsage, preflight, rateLimited, verify } from "../../../lib/http.js";
 import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 
 /**
@@ -345,6 +345,7 @@ export async function POST(req) {
   // A shared access code couldn't be revoked for one person and told us
   // nothing about who was calling. The session token does both: Supabase
   // verifies the signature, and we get a user id to rate limit against.
+  const token = bearer(req);
   const user = await verify(req);
   if (!user) return json({ error: "Sign in to generate questions." }, 401, origin);
 
@@ -393,6 +394,12 @@ export async function POST(req) {
     // rather than reasoned about.
     console.log(`generate n=${n} harder=${harder === true} ${result.ok ? "ok" : result.status} ${Date.now() - started}ms`);
     if (!result.ok) return upstreamError(result, origin, json, "generating");
+
+    // Awaited rather than left running: a serverless invocation can be torn
+    // down the moment it replies, and a dropped write here would quietly
+    // under-report the expensive half of the bill. Against a call that took
+    // seconds, one insert costs nothing worth saving.
+    await logUsage({ token, userId: user.id, kind: "generate", model, usage: result.usage });
 
     const questions = parseQuestions(result.text);
     if (!questions) {

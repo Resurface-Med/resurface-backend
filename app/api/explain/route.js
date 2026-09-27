@@ -10,7 +10,7 @@
 // lecture's worth of questions is neither, and a burst of one should not leave
 // the other with nothing.
 
-import { allowedOrigin, json, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
+import { allowedOrigin, bearer, json, logUsage, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
 import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
@@ -55,6 +55,7 @@ export async function OPTIONS(req) {
 export async function POST(req) {
   const origin = allowedOrigin(req.headers.get("origin"));
 
+  const token = bearer(req);
   const user = await verify(req);
   if (!user) return json({ error: "Sign in first." }, 401, origin);
 
@@ -108,6 +109,7 @@ export async function POST(req) {
     }
     return followUp({
       origin, apiKey, ctx, message: message.trim(), history, remaining: quota.remaining,
+      token, userId: user.id,
     });
   }
 
@@ -126,6 +128,11 @@ export async function POST(req) {
     });
 
     if (!result.ok) return upstreamError(result, origin, json, "asking for help");
+    await logUsage({
+      token, userId: user.id, kind: "explain",
+      model: process.env.GEMINI_EXPLAIN_MODEL || DEFAULT_MODEL,
+      usage: result.usage,
+    });
 
     const parsed = parseJson(result.text);
     if (!parsed?.why_right) {
@@ -188,7 +195,7 @@ function questionKey(questionId, question) {
   return `t:${h}`;
 }
 
-async function followUp({ origin, apiKey, ctx, message, history, remaining }) {
+async function followUp({ origin, apiKey, ctx, message, history, remaining, token, userId }) {
   if (message.length > 500) {
     return json({ error: "Keep follow-ups under 500 characters." }, 400, origin);
   }
@@ -202,8 +209,11 @@ async function followUp({ origin, apiKey, ctx, message, history, remaining }) {
   const input = [{
     type: "text",
     text: [
+      /* The question block above is whichever one is on screen now. Moving
+         on sends that new question and no earlier thread, so a reply cannot
+         keep teaching the one they left. */
       ctx,
-      transcript ? `Conversation so far:\n${transcript}` : null,
+      transcript ? `Conversation so far, about this question only:\n${transcript}` : null,
       `Student follow-up: ${message}`,
     ].filter(Boolean).join("\n\n"),
   }];
@@ -220,6 +230,11 @@ async function followUp({ origin, apiKey, ctx, message, history, remaining }) {
     });
 
     if (!result.ok) return upstreamError(result, origin, json, "asking for help");
+    await logUsage({
+      token, userId, kind: "explain",
+      model: process.env.GEMINI_EXPLAIN_MODEL || DEFAULT_MODEL,
+      usage: result.usage,
+    });
 
     const reply = String(result.text || "").trim();
     if (!reply) {
