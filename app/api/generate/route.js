@@ -52,6 +52,12 @@ const MAX_PER_WINDOW = 10;
 // about $0.02 a lecture.
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 
+/* How much of a deck's existing questions to show the model. Sixty stems of
+   a hundred and sixty characters is about two thousand tokens — real against
+   a lecture, and cheap against generating the same questions twice. */
+const AVOID_MAX = 60;
+const AVOID_CHARS = 160;
+
 
 
 
@@ -81,7 +87,7 @@ function toGeminiInput(userContent) {
   }).filter(Boolean);
 }
 
-async function callAnthropic({ apiKey, userContent, n, harder }) {
+async function callAnthropic({ apiKey, userContent, n, harder, avoid }) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -92,7 +98,7 @@ async function callAnthropic({ apiKey, userContent, n, harder }) {
     body: JSON.stringify({
       model: "claude-haiku-4-5",
       max_tokens: 8192,
-      system: systemPrompt(n, harder),
+      system: systemPrompt(n, harder, avoid),
       messages: [{ role: "user", content: userContent }],
     }),
   });
@@ -158,12 +164,29 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { userContent, count = 5, harder = false } = body || {};
+  const { userContent, count = 5, harder = false, avoid: rawAvoid } = body || {};
   if (!Array.isArray(userContent) || userContent.length === 0) {
     return json({ error: "No content to generate from." }, 400, origin);
   }
 
   const n = Math.min(Math.max(parseInt(count) || 5, 1), MAX_COUNT);
+
+  /*
+   * The stems already in the deck, so a second pass over the same lecture
+   * does not write the same questions again.
+   *
+   * Bounded here rather than trusted: this arrives from the client and is
+   * pasted into the prompt, so it is capped at AVOID_MAX stems of
+   * AVOID_CHARS each — a deck of three hundred would otherwise cost more in
+   * input than the lecture does. Newest first, because the client sends
+   * them in order and the recent ones are the likely collisions.
+   */
+  const avoid = (Array.isArray(rawAvoid) ? rawAvoid : [])
+    .filter(x => typeof x === "string")
+    .map(x => x.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(-AVOID_MAX)
+    .map(x => (x.length > AVOID_CHARS ? `${x.slice(0, AVOID_CHARS)}…` : x));
   const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
 
   try {
@@ -173,7 +196,7 @@ export async function POST(req) {
       ? await callGemini({
           apiKey: geminiKey,
           model,
-          system: systemPrompt(n, harder === true),
+          system: systemPrompt(n, harder === true, avoid),
           input,
           schema: QUESTION_SCHEMA,
           ...(harder === true && {
@@ -182,11 +205,11 @@ export async function POST(req) {
           }),
           timeoutMs: ATTEMPT_MS,
         })
-      : await callAnthropic({ apiKey: anthropicKey, userContent, n, harder: harder === true });
+      : await callAnthropic({ apiKey: anthropicKey, userContent, n, harder: harder === true, avoid });
 
     // One line per call so the next slow one can be read off the logs
     // rather than reasoned about.
-    console.log(`generate n=${n} harder=${harder === true} ${result.ok ? "ok" : result.status} ${Date.now() - started}ms`);
+    console.log(`generate n=${n} harder=${harder === true} avoid=${avoid.length} ${result.ok ? "ok" : result.status} ${Date.now() - started}ms`);
     if (!result.ok) return upstreamError(result, origin, json, "generating");
 
     // Awaited rather than left running: a serverless invocation can be torn
