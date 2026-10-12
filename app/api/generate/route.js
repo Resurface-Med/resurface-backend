@@ -169,7 +169,8 @@ export async function POST(req) {
     return json({ error: "No content to generate from." }, 400, origin);
   }
 
-  const n = Math.min(Math.max(parseInt(count) || 5, 1), MAX_COUNT);
+  const asked = Math.max(parseInt(count) || 5, 1);
+  const n = Math.min(asked, MAX_COUNT);
 
   /*
    * The stems already in the deck, so a second pass over the same lecture
@@ -209,7 +210,11 @@ export async function POST(req) {
 
     // One line per call so the next slow one can be read off the logs
     // rather than reasoned about.
-    console.log(`generate n=${n} harder=${harder === true} avoid=${avoid.length} ${result.ok ? "ok" : result.status} ${Date.now() - started}ms`);
+    /* asked is logged only when it differs, so a count that does not match
+       what somebody chose is visible here rather than inferred from a
+       complaint. The client caps at the same number, so this firing means an
+       old tab or something calling the API directly. */
+    console.log(`generate n=${n}${asked !== n ? ` (asked ${asked})` : ""} harder=${harder === true} avoid=${avoid.length} ${result.ok ? "ok" : result.status} ${Date.now() - started}ms`);
     if (!result.ok) return upstreamError(result, origin, json, "generating");
 
     // Awaited rather than left running: a serverless invocation can be torn
