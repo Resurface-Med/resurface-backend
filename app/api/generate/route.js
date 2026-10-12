@@ -36,31 +36,35 @@ const HARDER_TOKENS_PER_QUESTION = 600;
 const HARDER_HEADROOM = 4000;
 
 /*
- * Forty, measured rather than inherited.
+ * Fifty, measured rather than inherited.
  *
  * This was twenty from the first commit with no comment, which made it look
  * like a limit someone had found. It was not: requests are what the free
  * tier counts, not questions, so a small cap wastes the scarce thing — two
- * requests to get forty questions costs twice as much of the day as one.
+ * requests to get fifty questions costs twice as much of the day as one.
  *
  * What actually bounds it, from a real generation of ten that took 6,957ms
  * and 3,370 output tokens:
  *   time   — about 0.7s a question, against ATTEMPT_MS of 55s, so the
- *            timeout arrives somewhere around seventy. Forty is ~28s.
- *   output — about 340 tokens a question. Forty is ~13,600, inside the
- *            16,000 the Harder path already budgets at n=20.
+ *            timeout arrives somewhere around seventy. Fifty is ~35s.
+ *   output — about 340 tokens a question. Fifty is ~17,000, which is past
+ *            the 16,000 the Harder path budgets at n=20 and so past the
+ *            largest output this codebase had previously assumed. The
+ *            Standard path sets no cap of its own, so what applies is the
+ *            model's, and that number is not something I have confirmed.
  *
- * Above forty both get close enough to matter, and a generation that times
- * out is worse than a smaller one: it retries, so it costs two or three
- * requests instead of one and leaves somebody watching a window for two
- * minutes.
+ * So fifty is a deliberate choice rather than a safe one. The failure it
+ * risks is not fewer questions: a reply cut off mid-JSON does not parse, so
+ * the whole batch fails with "The model returned invalid JSON", and the
+ * retry costs another request. If that ever appears at fifty and not at
+ * forty, that is the reason and forty is the fallback.
  *
  * The real limit is not technical. A lecture holds only so many fair
  * questions, and the prompt is told not to ask about a passing mention — so
  * past some point this stops writing questions and starts padding. That
  * point depends on the lecture, which is why it is not enforced here.
  */
-const MAX_COUNT = 40;
+const MAX_COUNT = 50;
 const MAX_PER_WINDOW = 10;
 
 // Flash-Lite, and the free tier's shape is the reason rather than the model's.
