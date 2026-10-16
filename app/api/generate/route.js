@@ -1,4 +1,4 @@
-import { allowedOrigin, bearer, json, logUsage, preflight, rateLimited, verify } from "../../../lib/http.js";
+import { allowedOrigin, bearer, json, logUsage, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
 import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 import { systemPrompt, QUESTION_SCHEMA, alphabetise } from "../../../lib/prompt.js";
 
@@ -66,6 +66,14 @@ const HARDER_HEADROOM = 4000;
  */
 const MAX_COUNT = 50;
 const MAX_PER_WINDOW = 10;
+
+/*
+ * Generations per person per day. The free Gemini tier is 500 requests a day
+ * for everyone together, and batches (up to ten lectures, one request each)
+ * let one person spend a lot of it quickly. Thirty is three full batches.
+ * In-memory like the rest, so best-effort: a cold start forgets it.
+ */
+const MAX_PER_DAY = 30;
 
 // Flash-Lite, and the free tier's shape is the reason rather than the model's.
 // Every full Flash model — 3, 3.5, 3.6, 3.7 — is capped at 20 requests a day
@@ -187,6 +195,9 @@ export async function POST(req) {
 
   if (rateLimited("generate", user.id, MAX_PER_WINDOW)) {
     return json({ error: "Slow down — too many generations. Try again in a minute." }, 429, origin);
+  }
+  if (!takeQuota("generate-day", user.id, MAX_PER_DAY, 24 * 60 * 60 * 1000).allowed) {
+    return json({ error: `That's ${MAX_PER_DAY} generations today, the daily limit. It resets tomorrow.` }, 429, origin);
   }
 
   let body;

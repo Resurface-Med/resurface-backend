@@ -353,3 +353,27 @@ describe("transient upstream failures", () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("daily cap", () => {
+  it("refuses the 31st generation in a day, one per minute so the minute limit never bites", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    vi.useFakeTimers();
+    const base = Date.UTC(2026, 9, 16, 9, 0, 0);
+    /* A quick, non-retryable answer from the model: the cap is what is under test. */
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: { message: "bad" } }), text: async () => "bad" });
+    for (let i = 0; i < 30; i++) {
+      vi.setSystemTime(base + i * 61_000);
+      const res = await POST(req());
+      expect(res.status).not.toBe(429);
+    }
+    vi.setSystemTime(base + 30 * 61_000);
+    const res = await POST(req());
+    const body = await res.json();
+    expect(res.status).toBe(429);
+    expect(body.error).toMatch(/daily limit/);
+    /* And the next day it is open again. */
+    vi.setSystemTime(base + 25 * 60 * 60 * 1000);
+    expect((await POST(req())).status).not.toBe(429);
+    delete process.env.GEMINI_API_KEY;
+  });
+});
