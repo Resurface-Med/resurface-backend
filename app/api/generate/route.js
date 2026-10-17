@@ -1,4 +1,5 @@
 import { allowedOrigin, bearer, json, logUsage, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
+import { dropRepeats } from "../../../lib/dedupe.js";
 import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 import { systemPrompt, QUESTION_SCHEMA, alphabetise } from "../../../lib/prompt.js";
 
@@ -94,6 +95,9 @@ const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
    a lecture, and cheap against generating the same questions twice. */
 const AVOID_MAX = 60;
 const AVOID_CHARS = 160;
+/* How many of the deck's questions the result is checked against. Larger
+   than AVOID_MAX: checking costs nothing, the prompt is what is paid for. */
+const EXISTING_MAX = 1000;
 
 
 
@@ -222,12 +226,19 @@ export async function POST(req) {
    * input than the lecture does. Newest first, because the client sends
    * them in order and the recent ones are the likely collisions.
    */
-  const avoid = (Array.isArray(rawAvoid) ? rawAvoid : [])
-    .filter(x => typeof x === "string")
-    .map(x => x.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
+  /* Each is a stem, or { q, a } — the stem and its correct answer — from
+     clients since 2026-10-17: with the answer the model can see which *fact*
+     was tested, not only how it was worded. All of them (bounded) are used
+     to filter the result; the newest AVOID_MAX go into the prompt. */
+  const clip = (x, n) => (x.length > n ? `${x.slice(0, n)}…` : x);
+  const tidy = x => (typeof x === "string" ? x.replace(/\s+/g, " ").trim() : "");
+  const existing = (Array.isArray(rawAvoid) ? rawAvoid : [])
+    .slice(-EXISTING_MAX)
+    .map(x => (typeof x === "string" ? { q: tidy(x), a: "" } : { q: tidy(x?.q), a: tidy(x?.a) }))
+    .filter(x => x.q);
+  const avoid = existing
     .slice(-AVOID_MAX)
-    .map(x => (x.length > AVOID_CHARS ? `${x.slice(0, AVOID_CHARS)}…` : x));
+    .map(x => (x.a ? `${clip(x.q, AVOID_CHARS)} (answer: ${clip(x.a, 60)})` : clip(x.q, AVOID_CHARS)));
   const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
 
   try {
@@ -263,12 +274,16 @@ export async function POST(req) {
     // seconds, one insert costs nothing worth saving.
     await logUsage({ token, userId: user.id, kind: "generate", model, usage: result.usage });
 
-    const questions = parseQuestions(result.text);
-    if (!questions) {
+    const parsed = parseQuestions(result.text);
+    if (!parsed) {
       return json({ error: "The model returned invalid JSON. Try again." }, 502, origin);
     }
 
-    return json({ questions }, 200, origin);
+    /* The prompt asks for nothing already in the deck; this makes sure. */
+    const { kept: questions, removed } = dropRepeats(parsed, existing);
+    if (removed) console.log(`generate dropped ${removed} repeat${removed === 1 ? "" : "s"} of ${parsed.length}`);
+
+    return json({ questions, removed }, 200, origin);
   } catch (e) {
     return json({ error: e.message || "Generation failed." }, 500, origin);
   }

@@ -272,6 +272,42 @@ describe("Gemini response handling", () => {
   });
 });
 
+describe("repeats of what the deck already holds", () => {
+  beforeEach(() => { process.env.GEMINI_API_KEY = "gem-test"; });
+  afterEach(() => { delete process.env.GEMINI_API_KEY; });
+  const mk = (q, right) => ({ q, opts: [right, "Bx", "Cx", "Dx", "Ex"], ans: 0, exp: "e", optExp: ["", "b", "c", "d", "e"] });
+
+  it("drops a question the deck already has, and says how many", async () => {
+    geminiReturns({ output_text: JSON.stringify({ questions: [
+      mk("What is the approximate length of the adult female urethra?", "4 cm"),
+      mk("Which muscle forms the bulk of the bladder wall?", "Detrusor"),
+    ] }) });
+    const body = await (await POST(req({ body: {
+      userContent: [{ type: "text", text: "x" }],
+      avoid: [{ q: "What is the approximate length of the adult female urethra?", a: "4 cm" }],
+    } }))).json();
+    expect(body.questions.map(q => q.q)).toEqual(["Which muscle forms the bulk of the bladder wall?"]);
+    expect(body.removed).toBe(1);
+  });
+
+  it("still takes plain stems from older clients", async () => {
+    geminiReturns({ output_text: JSON.stringify({ questions: [mk("What is the approximate length of the adult female urethra?", "4 cm")] }) });
+    const body = await (await POST(req({ body: {
+      userContent: [{ type: "text", text: "x" }],
+      avoid: ["What is the approximate length of the adult female urethra?"],
+    } }))).json();
+    expect(body.questions).toHaveLength(0);
+    expect(body.removed).toBe(1);
+  });
+
+  it("shows the model the answers, so it can see which fact was tested", async () => {
+    geminiReturns({ output_text: JSON.stringify({ questions: [mk("Q?", "A")] }) });
+    await POST(req({ body: { userContent: [{ type: "text", text: "x" }], avoid: [{ q: "Where is the trigone?", a: "Bladder base" }] } }));
+    const sent = JSON.stringify(globalThis.fetch.mock.calls[0][1].body);
+    expect(sent).toContain("Where is the trigone? (answer: Bladder base)");
+  });
+});
+
 describe("free-tier quota handling", () => {
   beforeEach(() => { process.env.GEMINI_API_KEY = "gem-test"; });
   afterEach(() => { delete process.env.GEMINI_API_KEY; });
