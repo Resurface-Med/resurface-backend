@@ -5,36 +5,12 @@ import { systemPrompt, QUESTION_SCHEMA, alphabetise } from "../../../lib/prompt.
 
 /**
  * Set explicitly rather than left to the platform default, because the retries
- * in callGemini are only real if the function outlives them. Generating twenty
- * questions is tens of seconds on its own — Harder, with twice the prompt and
- * a reason written for every wrong option, went past 60 and was killed — so
- * the budget is two attempts of ATTEMPT_MS plus the backoff between them.
+ * in callGemini are only real if the function outlives them. A full set is
+ * tens of seconds on its own, so the budget is two attempts of ATTEMPT_MS
+ * plus the backoff between them.
  */
 export const maxDuration = 120;
 const ATTEMPT_MS = 55_000;
-
-/**
- * What makes the call fast, as opposed to what stops it hanging.
- *
- * Gemini 3.x thinks at "medium" when nothing is said, and thinks longest
- * over the longest prompt — Harder's, with its rule set, kept it reasoning
- * for the whole minute before it wrote a token. Standard has never set
- * this and its output was judged right, so Standard's request stays as it
- * was; Harder gets "low", which is enough to pick the nearest distractor
- * with four worked examples in front of it and is not enough to sit and
- * deliberate.
- *
- * The output cap is the other half. Without one a small model that starts
- * repeating inside a JSON array runs until Google's own limit, which from
- * here looks like a hang. A question is ~300 tokens with its explanations;
- * 600 each plus headroom is never reached by a set that is going well and
- * ends one that is not. Thinking tokens count against the same cap, which
- * is why it is only set where the thinking level is known: Standard's
- * medium thinking has no fixed size and a cap could cut its answer off.
- */
-const HARDER_THINKING = "low";
-const HARDER_TOKENS_PER_QUESTION = 600;
-const HARDER_HEADROOM = 4000;
 
 /*
  * Fifty, measured rather than inherited.
@@ -48,11 +24,9 @@ const HARDER_HEADROOM = 4000;
  * and 3,370 output tokens:
  *   time   — about 0.7s a question, against ATTEMPT_MS of 55s, so the
  *            timeout arrives somewhere around seventy. Fifty is ~35s.
- *   output — about 340 tokens a question. Fifty is ~17,000, which is past
- *            the 16,000 the Harder path budgets at n=20 and so past the
- *            largest output this codebase had previously assumed. The
- *            Standard path sets no cap of its own, so what applies is the
- *            model's, and that number is not something I have confirmed.
+ *   output — about 340 tokens a question. Fifty is ~17,000. This path sets
+ *            no cap of its own, so what applies is the model's, and that
+ *            number is not something I have confirmed.
  *
  * So fifty is a deliberate choice rather than a safe one. The failure it
  * risks is not fewer questions: a reply cut off mid-JSON does not parse, so
@@ -128,7 +102,7 @@ function toGeminiInput(userContent) {
   }).filter(Boolean);
 }
 
-async function callAnthropic({ apiKey, userContent, n, harder, avoid }) {
+async function callAnthropic({ apiKey, userContent, n, avoid }) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -139,7 +113,7 @@ async function callAnthropic({ apiKey, userContent, n, harder, avoid }) {
     body: JSON.stringify({
       model: "claude-haiku-4-5",
       max_tokens: 8192,
-      system: systemPrompt(n, harder, avoid),
+      system: systemPrompt(n, avoid),
       messages: [{ role: "user", content: userContent }],
     }),
   });
@@ -208,7 +182,7 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { userContent, count = 5, harder = false, avoid: rawAvoid } = body || {};
+  const { userContent, count = 5, avoid: rawAvoid } = body || {};
   if (!Array.isArray(userContent) || userContent.length === 0) {
     return json({ error: "No content to generate from." }, 400, origin);
   }
@@ -248,16 +222,12 @@ export async function POST(req) {
       ? await callGemini({
           apiKey: geminiKey,
           model,
-          system: systemPrompt(n, harder === true, avoid),
+          system: systemPrompt(n, avoid),
           input,
           schema: QUESTION_SCHEMA,
-          ...(harder === true && {
-            thinkingLevel: HARDER_THINKING,
-            maxOutputTokens: n * HARDER_TOKENS_PER_QUESTION + HARDER_HEADROOM,
-          }),
           timeoutMs: ATTEMPT_MS,
         })
-      : await callAnthropic({ apiKey: anthropicKey, userContent, n, harder: harder === true, avoid });
+      : await callAnthropic({ apiKey: anthropicKey, userContent, n, avoid });
 
     // One line per call so the next slow one can be read off the logs
     // rather than reasoned about.
@@ -265,7 +235,7 @@ export async function POST(req) {
        what somebody chose is visible here rather than inferred from a
        complaint. The client caps at the same number, so this firing means an
        old tab or something calling the API directly. */
-    console.log(`generate n=${n}${asked !== n ? ` (asked ${asked})` : ""} harder=${harder === true} avoid=${avoid.length} ${result.ok ? "ok" : result.status} ${Date.now() - started}ms`);
+    console.log(`generate n=${n}${asked !== n ? ` (asked ${asked})` : ""} avoid=${avoid.length} ${result.ok ? "ok" : result.status} ${Date.now() - started}ms`);
     if (!result.ok) return upstreamError(result, origin, json, "generating");
 
     // Awaited rather than left running: a serverless invocation can be torn
