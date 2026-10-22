@@ -26,7 +26,7 @@ export const maxDuration = 30;
 
 const MAX_PER_WINDOW = 20;
 /** How many free-text / pill asks a student gets on one bank question. */
-export const MAX_ASKS_PER_QUESTION = 3;
+export const MAX_ASKS_PER_QUESTION = 10;
 
 const SYSTEM = `You are helping a Year 1 medical student who has just answered a multiple-choice question incorrectly.
 They chose one option. Explain, in plain English, why the thing they were probably thinking is wrong, then why the correct answer is right.

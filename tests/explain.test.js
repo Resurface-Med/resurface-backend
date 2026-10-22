@@ -126,8 +126,8 @@ describe("follow-ups", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       reply: "Gi lowers cAMP via inhibition.",
-      remaining: 2,
-      limit: 3,
+      remaining: 9,
+      limit: 10,
     });
 
     const sent = JSON.parse(f.mock.calls[0][1].body);
@@ -138,15 +138,15 @@ describe("follow-ups", () => {
     expect(sent.input[0].text).not.toContain("The explanation they already read");
   });
 
-  it("caps follow-ups at 3 per question", async () => {
+  it("caps follow-ups at 10 per question", async () => {
     returns({ output_text: "ok" });
     const body = { ...QUESTION, questionId: "q-limit", message: "why?" };
-    expect((await POST(req({ body }))).status).toBe(200);
-    expect((await POST(req({ body }))).status).toBe(200);
-    expect((await POST(req({ body }))).status).toBe(200);
+    for (let i = 0; i < 10; i++) {
+      expect((await POST(req({ body }))).status).toBe(200);
+    }
     const blocked = await POST(req({ body }));
     expect(blocked.status).toBe(429);
-    expect(await blocked.json()).toMatchObject({ remaining: 0, limit: 3 });
+    expect(await blocked.json()).toMatchObject({ remaining: 0, limit: 10 });
   });
 
   it("tracks each question separately", async () => {
