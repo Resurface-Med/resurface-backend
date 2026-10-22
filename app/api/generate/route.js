@@ -1,5 +1,6 @@
 import { allowedOrigin, bearer, json, logUsage, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
 import { dropRepeats } from "../../../lib/dedupe.js";
+import { dropGiveaways } from "../../../lib/giveaway.js";
 import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 import { systemPrompt, QUESTION_SCHEMA, alphabetise } from "../../../lib/prompt.js";
 
@@ -249,11 +250,13 @@ export async function POST(req) {
       return json({ error: "The model returned invalid JSON. Try again." }, 502, origin);
     }
 
-    /* The prompt asks for nothing already in the deck; this makes sure. */
-    const { kept: questions, removed } = dropRepeats(parsed, existing);
+    /* The prompt asks for neither of these; both still happen. */
+    const fresh = dropGiveaways(parsed);
+    if (fresh.removed) console.log(`generate dropped ${fresh.removed} with the answer in the stem, of ${parsed.length}`);
+    const { kept: questions, removed } = dropRepeats(fresh.kept, existing);
     if (removed) console.log(`generate dropped ${removed} repeat${removed === 1 ? "" : "s"} of ${parsed.length}`);
 
-    return json({ questions, removed }, 200, origin);
+    return json({ questions, removed, givenAway: fresh.removed }, 200, origin);
   } catch (e) {
     return json({ error: e.message || "Generation failed." }, 500, origin);
   }

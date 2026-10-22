@@ -127,7 +127,7 @@ describe("request validation", () => {
     anthropicReturns({ content: [{ text: "[]" }] });
     await POST(req({ body: { userContent: [{ type: "text", text: "x" }], count: 9999 } }));
     const sent = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
-    expect(sent.system).toMatch(/Rules: 20 questions/);
+    expect(sent.system).toMatch(/Write 50 questions/);
   });
 });
 
@@ -288,6 +288,16 @@ describe("repeats of what the deck already holds", () => {
     } }))).json();
     expect(body.questions.map(q => q.q)).toEqual(["Which muscle forms the bulk of the bladder wall?"]);
     expect(body.removed).toBe(1);
+  });
+
+  it("drops a question whose stem already states the answer", async () => {
+    geminiReturns({ output_text: JSON.stringify({ questions: [
+      mk("tRNA carries amino acids to the ribosome. Which form of RNA does this?", "tRNA"),
+      mk("Which muscle forms the bulk of the bladder wall?", "Detrusor"),
+    ] }) });
+    const body = await (await POST(req({ body: { userContent: [{ type: "text", text: "x" }] } }))).json();
+    expect(body.questions.map(q => q.q)).toEqual(["Which muscle forms the bulk of the bladder wall?"]);
+    expect(body.givenAway).toBe(1);
   });
 
   it("still takes plain stems from older clients", async () => {
