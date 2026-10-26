@@ -50,6 +50,12 @@ const MAX_PER_WINDOW = 10;
  * In-memory like the rest, so best-effort: a cold start forgets it.
  */
 const MAX_PER_DAY = 30;
+/* Deck builders get double (Rafil, 2026-10-26): Jacob and Rayan write the
+   Year 2 decks everyone uses, and were the ones hitting 30. */
+const PER_DAY_FOR = new Map([
+  ["9a8e8256-04bb-4709-b506-2d74c9a0329d", 60],   // Jacob
+  ["d948687b-d205-477f-bb94-1c84dab338c1", 60],   // Rayan
+]);
 
 // Flash-Lite, and the free tier's shape is the reason rather than the model's.
 // Every full Flash model — 3, 3.5, 3.6, 3.7 — is capped at 20 requests a day
@@ -175,8 +181,9 @@ export async function POST(req) {
   if (rateLimited("generate", user.id, MAX_PER_WINDOW)) {
     return json({ error: "Slow down — too many generations. Try again in a minute." }, 429, origin);
   }
-  if (!takeQuota("generate-day", user.id, MAX_PER_DAY, 24 * 60 * 60 * 1000).allowed) {
-    return json({ error: `That's ${MAX_PER_DAY} generations today, the daily limit. It resets tomorrow.` }, 429, origin);
+  const perDay = PER_DAY_FOR.get(user.id) ?? MAX_PER_DAY;
+  if (!takeQuota("generate-day", user.id, perDay, 24 * 60 * 60 * 1000).allowed) {
+    return json({ error: `That's ${perDay} generations today, the daily limit. It resets tomorrow.` }, 429, origin);
   }
 
   let body;
