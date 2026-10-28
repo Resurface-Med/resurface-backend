@@ -136,7 +136,8 @@ describe("follow-ups", () => {
     expect(sent.generation_config.max_output_tokens).toBe(2400);
     expect(sent.generation_config.thinking_level).toBe("low");
     expect(sent.input[0].text).toContain("Student follow-up: Explain that more simply");
-    expect(sent.input[0].text).not.toContain("The explanation they already read");
+    // The bank explanation now goes with follow-ups (2026-10-28).
+    expect(sent.input[0].text).toContain("The explanation they already read");
   });
 
   it("caps follow-ups at 10 per question", async () => {
