@@ -132,8 +132,9 @@ describe("follow-ups", () => {
 
     const sent = JSON.parse(f.mock.calls[0][1].body);
     expect(sent.response_format).toBeUndefined();
-    expect(sent.generation_config.max_output_tokens).toBe(120);
-    expect(sent.generation_config.thinking_level).toBe("minimal");
+    // Room to explain, and a little thinking (2026-10-28).
+    expect(sent.generation_config.max_output_tokens).toBe(900);
+    expect(sent.generation_config.thinking_level).toBe("low");
     expect(sent.input[0].text).toContain("Student follow-up: Explain that more simply");
     expect(sent.input[0].text).not.toContain("The explanation they already read");
   });
