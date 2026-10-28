@@ -133,7 +133,7 @@ describe("follow-ups", () => {
     const sent = JSON.parse(f.mock.calls[0][1].body);
     expect(sent.response_format).toBeUndefined();
     // Room to explain, and a little thinking (2026-10-28).
-    expect(sent.generation_config.max_output_tokens).toBe(900);
+    expect(sent.generation_config.max_output_tokens).toBe(2400);
     expect(sent.generation_config.thinking_level).toBe("low");
     expect(sent.input[0].text).toContain("Student follow-up: Explain that more simply");
     expect(sent.input[0].text).not.toContain("The explanation they already read");
@@ -184,5 +184,16 @@ describe("follow-ups", () => {
       body: { ...QUESTION, message: "x".repeat(501) },
     }));
     expect(res.status).toBe(400);
+  });
+});
+
+describe("lastWholeSentence", async () => {
+  const { lastWholeSentence } = await import("../app/api/explain/route.js");
+  it("drops a sentence cut off mid-way", () => {
+    expect(lastWholeSentence("It is the kidney. Ask which of the choices is responsible for filtering and")).toBe("It is the kidney.");
+  });
+  it("keeps a reply that ends cleanly, and one with no full stop at all", () => {
+    expect(lastWholeSentence("One. Two!")).toBe("One. Two!");
+    expect(lastWholeSentence("no stop here")).toBe("no stop here");
   });
 });

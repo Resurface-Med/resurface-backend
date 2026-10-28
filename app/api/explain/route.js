@@ -213,6 +213,16 @@ function questionKey(questionId, question) {
   return `t:${h}`;
 }
 
+const FOLLOW_UP_MAX_TOKENS = 2400;
+
+/* The text up to its last full stop, question or exclamation mark (or the
+   whole text if there is none). Exported for its test. */
+export function lastWholeSentence(text) {
+  const t = String(text || "");
+  const m = t.match(/^[\s\S]*[.!?](?=["')\]]*\s|["')\]]*$)/);
+  return m ? m[0].trim() : t;
+}
+
 async function followUp({ origin, apiKey, ctx, message, history, remaining, token, userId }) {
   if (message.length > 500) {
     return json({ error: "Keep follow-ups under 500 characters." }, 400, origin);
@@ -243,8 +253,10 @@ async function followUp({ origin, apiKey, ctx, message, history, remaining, toke
       system: FOLLOW_UP_SYSTEM,
       input,
       /* Room to explain, and a little thinking so the reasoning holds
-         together. 120 tokens and minimal thinking made slogans. */
-      maxOutputTokens: 900,
+         together. 120 tokens and minimal thinking made slogans. Thinking
+         counts against this too: at 900 a reply spent 838 on thought and
+         was cut off mid-sentence (2026-10-28), so it is generous. */
+      maxOutputTokens: FOLLOW_UP_MAX_TOKENS,
       thinkingLevel: "low",
       fast: true,
     });
@@ -256,7 +268,10 @@ async function followUp({ origin, apiKey, ctx, message, history, remaining, toke
       usage: result.usage,
     });
 
-    const reply = String(result.text || "").trim();
+    /* If the budget ran out anyway, end on the last whole sentence rather
+       than mid-word. */
+    const spent = (result.usage?.output ?? 0) + (Number(result.usage?.raw?.total_thought_tokens) || 0);
+    const reply = spent >= FOLLOW_UP_MAX_TOKENS - 8 ? lastWholeSentence(String(result.text || "").trim()) : String(result.text || "").trim();
     if (!reply) {
       return json({ error: "Couldn't put that into words. Try again." }, 502, origin);
     }
