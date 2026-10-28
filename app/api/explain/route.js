@@ -72,7 +72,7 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { question, options, correct, picked, explanation, message, history, questionId, sitting } = body || {};
+  const { question, options, correct, picked, explanation, message, history, questionId, sitting, answered } = body || {};
   if (typeof question !== "string" || !Array.isArray(options) || options.length === 0) {
     return json({ error: "Nothing to explain." }, 400, origin);
   }
@@ -93,7 +93,7 @@ export async function POST(req) {
   }
 
   const ctx = buildContext(
-    { question, options, correct: known ? ci : null, picked: pi, explanation },
+    { question, options, correct: known ? ci : null, picked: pi, explanation, answered },
     { compact: asking },
   );
 
@@ -156,7 +156,7 @@ export async function POST(req) {
   }
 }
 
-function buildContext({ question, options, correct, picked, explanation }, { compact = false } = {}) {
+function buildContext({ question, options, correct, picked, explanation, answered }, { compact = false } = {}) {
   /* The tutor can be opened before the question is answered — it is a
      companion, not only a post-mortem. In that case the client sends no
      correct index and no explanation, so the model is not holding the
@@ -165,7 +165,9 @@ function buildContext({ question, options, correct, picked, explanation }, { com
   const known = Number.isInteger(correct) && options[correct] !== undefined;
   const chose = Number.isInteger(picked) && options[picked]
     ? `They chose: ${options[picked]}`
-    : known ? "They did not answer in time." : null;
+    /* The app now sends the answer before they pick (2026-10-28) and says
+       so with answered: false. Older apps don't send the flag. */
+    : answered === false ? "They have not picked an option yet." : known ? "They did not answer in time." : null;
 
   return [
     `Question: ${question}`,
@@ -196,7 +198,7 @@ Lay the answer out the way a good chat assistant does, so it is easy to scan:
 Length: as long as the explanation genuinely needs, and no longer. A simple fact can be two sentences. Never pad, never recap, no preamble, no encouragement.
 If they ask for a clue, one line, or a memory tip, give exactly that, in one or two sentences, with no lists and no Key point line.
 
-If they have NOT answered yet, you must not give the answer away, directly or indirectly. On a question that tests a fact, explaining that fact IS the answer, so do not explain it. Never describe the option that fits, never say which property or feature matches the stem, never contrast the structures or options in a way that points to one, and never walk through the options. Give a nudge only: the principle to think about, or a question to ask themselves, in two or three sentences, with no lists and no Key point line. If they ask how to approach a type of question (e.g. reading a blood gas), you may give the general method in a few steps without applying it to this question's values. If they ask for the answer, say you will tell them once they have picked one.
+If they have not picked an option yet, they are working through it with you: teach the idea fully, and if they ask for the answer, or the explanation needs it, tell them which option is right and why. Do not withhold it or set them homework (Rafil, 2026-10-28: hiding it left a student who had not met the topic guessing).
 Stay on this question and the idea it tests.
 Only state what you are sure is standard textbook teaching. If you are not certain of a particular detail, leave that detail out rather than guess, but still answer the question.
 
