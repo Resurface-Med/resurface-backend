@@ -10,8 +10,8 @@
 // lecture's worth of questions is neither, and a burst of one should not leave
 // the other with nothing.
 
-import { allowedOrigin, bearer, json, logUsage, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
-import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
+import { allowedOrigin, bearer, corsHeaders, json, logUsage, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
+import { callGemini, parseJson, streamGemini, upstreamError } from "../../../lib/gemini.js";
 
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 
@@ -120,6 +120,8 @@ export async function POST(req) {
     return followUp({
       origin, apiKey, ctx, message: message.trim(), history, remaining: quota.remaining,
       token, userId: user.id,
+      stream: body?.stream === true,
+      quick: body?.quick === true,
     });
   }
 
@@ -236,6 +238,8 @@ function questionKey(questionId, question) {
 }
 
 const FOLLOW_UP_MAX_TOKENS = 2400;
+/* A message that only acknowledges: no reasoning needed. */
+const ACK = /^\s*(?:(?:ok(?:ay)?|k|thanks?(?: you)?|ty|cheers|got it|makes sense|cool|nice|great|perfect|alright|understood|yeah|yes)[\s.,!]*)+$/i;
 
 /* The text up to its last full stop, question or exclamation mark (or the
    whole text if there is none). Exported for its test. */
@@ -245,7 +249,7 @@ export function lastWholeSentence(text) {
   return m ? m[0].trim() : t;
 }
 
-async function followUp({ origin, apiKey, ctx, message, history, remaining, token, userId }) {
+async function followUp({ origin, apiKey, ctx, message, history, remaining, token, userId, stream = false, quick = false }) {
   if (message.length > 500) {
     return json({ error: "Keep follow-ups under 500 characters." }, 400, origin);
   }
@@ -269,7 +273,12 @@ async function followUp({ origin, apiKey, ctx, message, history, remaining, toke
   }];
 
   try {
-    const result = await callGemini({
+    /* "ok"/"thanks": nothing to reason through, so no thinking step. Not
+       the quick buttons: at "low" the model already skips thinking when a
+       request is easy, and forcing "minimal" made a clue worse in testing
+       (2026-10-28). `quick` is accepted but changes nothing for now. */
+    const light = ACK.test(message);
+    const args = {
       apiKey,
       model: process.env.GEMINI_EXPLAIN_MODEL || DEFAULT_MODEL,
       system: FOLLOW_UP_SYSTEM,
@@ -279,9 +288,43 @@ async function followUp({ origin, apiKey, ctx, message, history, remaining, toke
          counts against this too: at 900 a reply spent 838 on thought and
          was cut off mid-sentence (2026-10-28), so it is generous. */
       maxOutputTokens: FOLLOW_UP_MAX_TOKENS,
-      thinkingLevel: "low",
+      thinkingLevel: light ? "minimal" : "low",
       fast: true,
-    });
+    };
+
+    /* Streamed when the app asks (2026-10-28): the reply shows as it is
+       written. The count left on this question goes in a header. */
+    if (stream) {
+      const up = await streamGemini(args);
+      if (!up.ok) return upstreamError(up, origin, json, "asking for help");
+      const enc = new TextEncoder();
+      const body = new ReadableStream({
+        async start(controller) {
+          let any = false;
+          try {
+            for await (const piece of up.chunks) { any = true; controller.enqueue(enc.encode(piece)); }
+            if (!any) controller.enqueue(enc.encode("Couldn't put that into words. Try again."));
+          } catch {
+            /* The far end dropped mid-reply: keep what arrived. */
+          }
+          controller.close();
+          await logUsage({ token, userId, kind: "explain", model: args.model, usage: up.usage() }).catch(() => {});
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: {
+          ...corsHeaders(origin),
+          "Access-Control-Expose-Headers": "x-remaining, x-limit",
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "no-cache, no-transform",
+          "x-remaining": String(remaining),
+          "x-limit": String(MAX_ASKS_PER_QUESTION),
+        },
+      });
+    }
+
+    const result = await callGemini(args);
 
     if (!result.ok) return upstreamError(result, origin, json, "asking for help");
     await logUsage({

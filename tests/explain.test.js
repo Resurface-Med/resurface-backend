@@ -198,3 +198,47 @@ describe("lastWholeSentence", async () => {
     expect(lastWholeSentence("no stop here")).toBe("no stop here");
   });
 });
+
+describe("streamed follow-ups (2026-10-28)", () => {
+  function sse(...texts) {
+    const events = [
+      ...texts.map(t => `event: step.delta\ndata: ${JSON.stringify({ event_type: "step.delta", delta: { type: "text", text: t } })}\n\n`),
+      `event: interaction.completed\ndata: ${JSON.stringify({ event_type: "interaction.completed", interaction: { usage: { total_output_tokens: 5, total_input_tokens: 9, total_tokens: 14 } } })}\n\n`,
+      "event: done\ndata: [DONE]\n\n",
+    ].join("");
+    const bytes = new TextEncoder().encode(events);
+    /* Split mid-event, as the network does. */
+    const parts = [bytes.slice(0, 37), bytes.slice(37)];
+    const body = new ReadableStream({ start(c) { parts.forEach(p => c.enqueue(p)); c.close(); } });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, body, json: async () => ({}) });
+    return globalThis.fetch;
+  }
+
+  it("streams the text and says how many are left", async () => {
+    const f = sse("Gi lowers ", "cAMP.");
+    const res = await POST(req({ body: { ...QUESTION, questionId: 7, message: "why?", stream: true } }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(res.headers.get("x-remaining")).toBe("9");
+    expect(res.headers.get("access-control-expose-headers")).toContain("x-remaining");
+    expect(await res.text()).toBe("Gi lowers cAMP.");
+    const sent = JSON.parse(f.mock.calls[0][1].body);
+    expect(sent.stream).toBe(true);
+    expect(sent.generation_config.thinking_level).toBe("low");
+  });
+
+  it("skips the thinking step for 'ok' and 'thanks', not for a quick button", async () => {
+    let f = sse("A clue.");
+    await (await POST(req({ body: { ...QUESTION, questionId: 8, message: "Give me a clue", stream: true, quick: true } }))).text();
+    expect(JSON.parse(f.mock.calls[0][1].body).generation_config.thinking_level).toBe("low");
+    f = sse("Glad it helped.");
+    await (await POST(req({ body: { ...QUESTION, questionId: 9, message: "ok thanks", stream: true } }))).text();
+    expect(JSON.parse(f.mock.calls[0][1].body).generation_config.thinking_level).toBe("minimal");
+    f = sse("Because...");
+    await (await POST(req({ body: { ...QUESTION, questionId: 11, message: "ok but why is it Gs", stream: true } }))).text();
+    expect(JSON.parse(f.mock.calls[0][1].body).generation_config.thinking_level).toBe("low");
+    f = sse("Glad it helped.");
+    await (await POST(req({ body: { ...QUESTION, questionId: 10, message: "thanks!", stream: true } }))).text();
+    expect(JSON.parse(f.mock.calls[0][1].body).generation_config.thinking_level).toBe("minimal");
+  });
+});
