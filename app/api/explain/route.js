@@ -72,7 +72,7 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { question, options, correct, picked, explanation, message, history, questionId, sitting, answered } = body || {};
+  const { question, options, correct, picked, explanation, message, history, questionId, sitting, answered, topic } = body || {};
   if (typeof question !== "string" || !Array.isArray(options) || options.length === 0) {
     return json({ error: "Nothing to explain." }, 400, origin);
   }
@@ -93,7 +93,7 @@ export async function POST(req) {
   }
 
   const ctx = buildContext(
-    { question, options, correct: known ? ci : null, picked: pi, explanation, answered },
+    { question, options, correct: known ? ci : null, picked: pi, explanation, answered, topic },
     /* The bank's explanation goes with follow-ups too (2026-10-28): it
        keeps the tutor in line with the lecture's own figures and wording,
        for about sixty tokens. */
@@ -161,7 +161,7 @@ export async function POST(req) {
   }
 }
 
-export function buildContext({ question, options, correct, picked, explanation, answered }, { compact = false } = {}) {
+export function buildContext({ question, options, correct, picked, explanation, answered, topic }, { compact = false } = {}) {
   /* The tutor can be opened before the question is answered — it is a
      companion, not only a post-mortem. In that case the client sends no
      correct index and no explanation, so the model is not holding the
@@ -182,6 +182,11 @@ export function buildContext({ question, options, correct, picked, explanation, 
     // Follow-ups already sit next to the bank explanation on screen — repeating
     // it here just burns tokens and time for no new information.
     !compact && explanation ? `The explanation they already read: ${explanation}` : null,
+    /* The question's topic note, from the knowledge library (2026-10-28):
+       it is on their screen, so the tutor builds on it. Capped. */
+    topic && typeof topic.title === "string" && typeof topic.body === "string"
+      ? `The topic note they can open under the explanation ("${topic.title.slice(0, 120)}"): ${topic.body.slice(0, 2500)}`
+      : null,
   ].filter(Boolean).join("\n");
 }
 

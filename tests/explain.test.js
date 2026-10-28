@@ -242,3 +242,13 @@ describe("streamed follow-ups (2026-10-28)", () => {
     expect(JSON.parse(f.mock.calls[0][1].body).generation_config.thinking_level).toBe("minimal");
   });
 });
+
+describe("the knowledge library note (2026-10-28)", () => {
+  it("is passed to the tutor when the question has one, and capped", async () => {
+    const f = returns({ output_text: "ok" });
+    await POST(req({ body: { ...QUESTION, questionId: 77, message: "explain", topic: { title: "G proteins", body: "Gs raises cAMP. " + "x".repeat(4000) } } }));
+    const text = JSON.parse(f.mock.calls[0][1].body).input[0].text;
+    expect(text).toContain('The topic note they can open under the explanation ("G proteins"): Gs raises cAMP.');
+    expect(text.length).toBeLessThan(4000);
+  });
+});
