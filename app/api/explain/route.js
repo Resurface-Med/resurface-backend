@@ -72,7 +72,7 @@ export async function POST(req) {
   try { body = await req.json(); }
   catch { return json({ error: "Malformed request body." }, 400, origin); }
 
-  const { question, options, correct, picked, explanation, message, history, questionId } = body || {};
+  const { question, options, correct, picked, explanation, message, history, questionId, sitting } = body || {};
   if (typeof question !== "string" || !Array.isArray(options) || options.length === 0) {
     return json({ error: "Nothing to explain." }, 400, origin);
   }
@@ -99,7 +99,14 @@ export async function POST(req) {
 
   if (asking) {
     const qKey = questionKey(questionId, question);
-    const quota = takeQuota("explain-q", `${user.id}:${qKey}`, MAX_ASKS_PER_QUESTION);
+    /* Per sitting, not per question for life (2026-10-28): the app sends its
+       practice session's id, so seeing a question again in a later session
+       starts a fresh ${MAX_ASKS_PER_QUESTION}. A student came back days later
+       to "1 left" without having asked anything that day. Without an id
+       (older app) the bucket is the question, as before. The per-minute
+       cap above still bounds how fast anyone can spend. */
+    const sit = typeof sitting === "string" && /^[\w-]{8,64}$/.test(sitting) ? sitting : null;
+    const quota = takeQuota("explain-q", `${user.id}:${qKey}${sit ? `:${sit}` : ""}`, MAX_ASKS_PER_QUESTION);
     if (!quota.allowed) {
       return json({
         error: `You've used all ${MAX_ASKS_PER_QUESTION} AI responses on this question.`,
