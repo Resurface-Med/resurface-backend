@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions, shrink } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -221,5 +221,16 @@ describe("check_deck", () => {
     expect(out["Not five options; Resurface questions have exactly five."]).toEqual([2]);
     expect(out["No topic note"]).toEqual([2]);
     expect(out["Duplicate question (same wording as another)"]).toEqual([1, 2]);
+  });
+});
+
+describe("shrink", () => {
+  it("brings a big picture to the app's size as WebP", async () => {
+    const { default: sharp } = await import("sharp");
+    const big = await sharp({ create: { width: 4000, height: 3000, channels: 3, background: "#3562f5" } }).jpeg({ quality: 95 }).toBuffer();
+    const out = await shrink(new Uint8Array(big), "image/jpeg", "jpg");
+    expect(out.type).toBe("image/webp");
+    const meta = await sharp(Buffer.from(out.buf)).metadata();
+    expect(Math.max(meta.width, meta.height)).toBe(1600);
   });
 });
