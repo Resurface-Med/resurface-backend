@@ -142,6 +142,21 @@ try {
   const withImg = await tool("get_questions", { question_ids: [ids[0]] });
   check(withImg.questions[0].explanation.includes(img.attached), "figure line in the explanation");
 
+  console.log("picture from the chat");
+  const ul = await tool("image_upload_link", { question_id: ids[2], place: "explanation", caption: "Chat picture", filename: "scan.png" });
+  check(ul.link_for_the_person.startsWith("https://app.tryresurface.com/oauth/upload#") && ul.sandbox_command.includes(ul.path), "image_upload_link gives a command and a link");
+  await tool("attach_uploaded_image", { question_id: ids[2], path: ul.path, place: "explanation" }, { expectError: true });
+  // what Claude's sandbox does with the command: PUT the file's bytes to the signed link
+  const png = Buffer.from(await (await fetch("https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/250px-PNG_transparency_demonstration_1.png", { headers: { "user-agent": "Resurface test (https://tryresurface.com)" } })).arrayBuffer());
+  const signed = ul.sandbox_command.match(/"(https:\/\/[^"]+)"/)[1];
+  const put = await fetch(signed, { method: "PUT", headers: { "content-type": "image/png", "x-upsert": "false" }, body: png });
+  check(put.ok, `the signed upload accepts the bytes (${put.status})`);
+  const att = await tool("attach_uploaded_image", { question_id: ids[2], path: ul.path, place: "explanation", caption: "Chat picture" });
+  created.images.push(att.attached);
+  const withChat = await tool("get_questions", { question_ids: [ids[2]] });
+  check(withChat.questions[0].explanation.includes(`![Chat picture](${ul.path})`), "the chat picture is in the explanation");
+  await tool("attach_uploaded_image", { question_id: ids[2], path: "someone-else/x.png", place: "question" }, { expectError: true });
+
   console.log("upkeep and undo");
   const health = await tool("check_deck", { deck_id: top.created.id });
   check(health.questions > 0 && Array.isArray(health.problems), "check_deck lists problems");
