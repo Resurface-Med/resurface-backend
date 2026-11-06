@@ -138,7 +138,7 @@ try {
   const page = await tool("add_image", { question_id: ids[1], image_url: "https://commons.wikimedia.org/wiki/File:PNG_transparency_demonstration_1.png", place: "question" });
   created.images.push(page.attached);
   check(!!page.attached, "add_image from a Commons File: page");
-  check(/\.png$/.test(img.attached), "add_image stored a copy");
+  check(/\.(png|webp)$/.test(img.attached), "add_image stored a copy");
   const withImg = await tool("get_questions", { question_ids: [ids[0]] });
   check(withImg.questions[0].explanation.includes(img.attached), "figure line in the explanation");
 
@@ -149,7 +149,9 @@ try {
   // what Claude's sandbox does with the command: PUT the file's bytes to the signed link
   const png = Buffer.from(await (await fetch("https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/250px-PNG_transparency_demonstration_1.png", { headers: { "user-agent": "Resurface test (https://tryresurface.com)" } })).arrayBuffer());
   const signed = ul.sandbox_command.match(/"(https:\/\/[^"]+)"/)[1];
-  const put = await fetch(signed, { method: "PUT", headers: { "content-type": "image/png", "x-upsert": "false" }, body: png });
+  const { default: sharp } = await import("sharp");
+  const webp = await sharp(png).webp({ quality: 82 }).toBuffer();     // what the sandbox command sends
+  const put = await fetch(signed, { method: "PUT", headers: { "content-type": "image/webp", "x-upsert": "false" }, body: webp });
   check(put.ok, `the signed upload accepts the bytes (${put.status})`);
   const att = await tool("attach_uploaded_image", { question_id: ids[2], path: ul.path, place: "explanation", caption: "Chat picture" });
   created.images.push(att.attached);
