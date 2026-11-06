@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, placeAmong, present, toolsFor } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, placeAmong, present, summary, toolsFor } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -90,4 +90,21 @@ describe("placeAmong", () => {
     expect(r.renumber).toEqual([{ id: "a", position: 0 }, { id: "b", position: 2 * STEP }]);
   });
   it("rejects a sibling that is not there", () => expect(() => placeAmong(sibs, { before: "z" })).toThrow());
+});
+
+describe("short and full forms", () => {
+  const note = { title: "Gallstones", body: "Intro.\n\n- ==Key==" };
+  const mk = (id, extra = {}) => ({ id, deck_id: "d", payload: { ...buildPayload({ question: "Q " + id + " " + "x".repeat(300), options: ["a", "b"], answer: "A", explanation: "e" }), ...extra } });
+  it("clips long questions in the short form", () => {
+    const s = summary(mk(1, { topic: note }));
+    expect(s.question.length).toBeLessThanOrEqual(160);
+    expect(s.answer).toBe("A: a");
+    expect(s.note).toBe("Gallstones");
+  });
+  it("gives a shared note once", () => {
+    const out = fullSet([mk(1, { topic: note }), mk(2, { topic: note }), mk(3)]);
+    expect(Object.keys(out.notes)).toEqual(["n1"]);
+    expect(out.questions.map(q => q.note)).toEqual(["n1", "n1", undefined]);
+    expect(out.questions[0].topic_note).toBeUndefined();
+  });
 });
