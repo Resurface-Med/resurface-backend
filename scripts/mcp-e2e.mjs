@@ -142,6 +142,32 @@ try {
   const withImg = await tool("get_questions", { question_ids: [ids[0]] });
   check(withImg.questions[0].explanation.includes(img.attached), "figure line in the explanation");
 
+  console.log("upkeep and undo");
+  const health = await tool("check_deck", { deck_id: top.created.id });
+  check(health.questions > 0 && Array.isArray(health.problems), "check_deck lists problems");
+  const before = (await tool("get_questions", { question_ids: [ids[0]] })).questions[0].explanation;
+  const ed = await tool("edit_questions", { edits: [{ question_id: ids[0], explanation: "A mistake to undo." }] });
+  check(!!ed.undo_id, "an edit replies with an undo_id");
+  const del = await tool("delete_questions", { question_ids: [ids[1]] });
+  const changes = await tool("list_changes", { limit: 5 });
+  check(changes.changes[0].undo_id === del.undo_id && changes.changes[0].deleted === 1, "list_changes shows the deletion first");
+  const u1 = await tool("undo_change", { undo_id: ed.undo_id });
+  const u2 = await tool("undo_change", { undo_id: del.undo_id });
+  check(u1.restored === 1 && u2.brought_back === 1, "undo restores the edit and brings back the deleted question");
+  const back = await tool("get_questions", { question_ids: [ids[0], ids[1]] });
+  check(back.questions[0].explanation === before && back.questions.length === 2, "both are exactly as before");
+  await tool("undo_change", { undo_id: ed.undo_id }, { expectError: true });
+  const hard = await tool("hardest_questions", { deck_id: top.created.id, min_attempts: 1 });
+  check(Array.isArray(hard.questions), "hardest_questions answers for a new deck");
+  const reps = await tool("list_reports", {});
+  check(typeof reps.reports === "number", "list_reports answers");
+  if (process.env.BIG_DECK) {
+    const big = await tool("check_deck", { deck_id: process.env.BIG_DECK });
+    console.log(`  big deck: ${big.questions} questions, ${big.decks} decks: ${JSON.stringify((big.problems ?? []).map(p => [p.problem, p.count]))}`);
+    const bh = await tool("hardest_questions", { deck_id: process.env.BIG_DECK, limit: 5 });
+    console.log(`  hardest: ${JSON.stringify(bh.questions?.map(q => [q.correct_pct, q.attempts]) ?? bh)}`);
+  }
+
   console.log("guards");
   await tool("delete_deck", { deck_id: top.created.id }, { expectError: true });
   await tool("update_deck", { deck_id: top.created.id, parent_deck_id: sub.created.id }, { expectError: true });

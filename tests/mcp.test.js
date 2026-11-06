@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -209,5 +209,17 @@ describe("shared notes by key", () => {
     expect(withNote({ topic_note: "n1" }, n).topic_note).toEqual({ title: "T", body: "B" });
     expect(withNote({ topic_note: { title: "x", body: "y" } }, n).topic_note.title).toBe("x");
     expect(() => withNote({ topic_note: "n9" }, n)).toThrow(/not a key/);
+  });
+});
+
+describe("check_deck", () => {
+  it("lists each problem with the questions it affects", () => {
+    const good = { id: 1, payload: { ...buildPayload({ question: "Which cell carries oxygen?", options: ["Basophil", "Erythrocyte", "Monocyte", "Neutrophil", "Platelet"], answer: "B", explanation: "e", why_wrong: { A: "a", C: "c", D: "d", E: "e" } }), topic: NOTE_EXEMPLARS[0], hl: ["Unconjugated bilirubin is fat soluble"] } };
+    expect(auditQuestions([good])).toEqual([]);
+    const four = { id: 2, payload: buildPayload({ question: "Which cell carries oxygen?", options: ["a", "b", "c", "d"], answer: "A", explanation: "e" }) };
+    const out = Object.fromEntries(auditQuestions([good, four]).map(p => [p.problem, p.ids]));
+    expect(out["Not five options; Resurface questions have exactly five."]).toEqual([2]);
+    expect(out["No topic note"]).toEqual([2]);
+    expect(out["Duplicate question (same wording as another)"]).toEqual([1, 2]);
   });
 });
