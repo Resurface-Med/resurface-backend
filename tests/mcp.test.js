@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, placeAmong, present, summary, toolsFor } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, normalizeArgs, placeAmong, present, summary, toolsFor } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -67,7 +67,7 @@ describe("buildPayload", () => {
     const topic = { title: "T", body: "Intro.\n\n- ==Key line here==\n- Other" };
     expect(() => buildPayload({ ...base, topic_note: topic, highlight_lines: ["Key line here"] })).not.toThrow();
     expect(() => buildPayload({ ...base, topic_note: topic, highlight_lines: ["Not there"] })).toThrow(/word for word/);
-    expect(() => checkHighlights(topic, ["a = b"])).toThrow(/"="/);
+    expect(() => checkHighlights({ body: "- a = b" }, ["a = b"])).toThrow(/"="/);
   });
   it("present round-trips the letters", () => {
     const q = present({ id: 7, deck_id: "d", payload: buildPayload(base) });
@@ -114,5 +114,44 @@ describe("aliases", () => {
     const tools = toolsFor({});
     expect(tools.has("edit_question")).toBe(true);
     expect(tools.list().some(t => t.name === "edit_question")).toBe(false);
+  });
+});
+
+describe("forgiving edits", () => {
+  const body = "Intro line.\n\n**Causes**\n- ==Gallstones and ethanol are the commonest causes==\n- Drug causes include furosemide";
+  const topic = { title: "Pancreatitis", body };
+  it("strips dashes, bold and == marks and fixes case and spacing", () => {
+    expect(checkHighlights(topic, ["- ==gallstones and  ethanol are the commonest causes=="])).toEqual(["Gallstones and ethanol are the commonest causes"]);
+    expect(checkHighlights(topic, ["**Causes**"])).toEqual(["Causes"]);
+    expect(checkHighlights(topic, ["Drug causes include furosemide", "Drug causes include furosemide"])).toEqual(["Drug causes include furosemide"]);
+  });
+  it("lists the note's lines when one is not there", () => {
+    expect(() => checkHighlights(topic, ["Something else"])).toThrow(/Drug causes include furosemide/);
+  });
+  it("accepts answers as B), option text, and whys as a list", () => {
+    const p = buildPayload({ question: "Q", options: ["alpha", "beta"], answer: "B)", explanation: "e", why_wrong: ["no alpha", null] });
+    expect(p.ans).toBe(1);
+    expect(p.optExp).toEqual(["no alpha", null]);
+    expect(buildPayload({ answer: "alpha" }, p).ans).toBe(0);
+  });
+  it("replacing a note keeps old highlights that still fit and drops the rest", () => {
+    const p = buildPayload({ question: "Q", options: ["a", "b"], answer: "A", explanation: "e", topic_note: topic, highlight_lines: ["Drug causes include furosemide"] });
+    const q = buildPayload({ topic_note: { title: "Pancreatitis", body: "Something new.\n\n- ==Only this==" } }, p);
+    expect(q.hl).toBeUndefined();
+    const r = buildPayload({ topic_note: { body: body + "\n- Extra" } }, p);
+    expect(r.topic.title).toBe("Pancreatitis");
+    expect(r.hl).toEqual(["Drug causes include furosemide"]);
+  });
+});
+
+describe("normalizeArgs", () => {
+  it("parses nested JSON sent as text and numeric question ids", () => {
+    const out = normalizeArgs({ edits: '[{"question_id":"12","topic_note":"{\\"title\\":\\"T\\",\\"body\\":\\"B\\"}"}]', deck_id: "123", question_ids: ["4", 5] });
+    expect(out.edits[0]).toEqual({ question_id: 12, topic_note: { title: "T", body: "B" } });
+    expect(out.deck_id).toBe("123");
+    expect(out.question_ids).toEqual([4, 5]);
+  });
+  it("leaves ordinary text alone", () => {
+    expect(normalizeArgs({ explanation: "[see figure] and more" })).toEqual({ explanation: "[see figure] and more" });
   });
 });
