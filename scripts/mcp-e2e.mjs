@@ -92,10 +92,11 @@ try {
   // The shapes a model really sends: nested JSON as text, ids as text,
   // answers with brackets, highlight lines with list marks and == marks.
   const e1 = await tool("edit_questions", {
+    notes: { n1: note },
     edits: JSON.stringify([
-      { question_id: String(ids[0]), topic_note: note, highlight_lines: ["- ==gallstones and alcohol cause most cases=="] },
-      { question_id: ids[1], topic_note: JSON.stringify(note), highlight_lines: ["Drugs include azathioprine and furosemide"], answer: "B)" },
-      { question_id: ids[2], topic_note: note, highlight_lines: "Glasgow score of 3 or more predicts severe disease" },
+      { question_id: String(ids[0]), topic_note: "n1", highlight_lines: ["- ==gallstones and alcohol cause most cases=="] },
+      { question_id: ids[1], topic_note: "n1", highlight_lines: ["Drugs include azathioprine and furosemide"], answer: "B)" },
+      { question_id: ids[2], topic_note: "n1", highlight_lines: "Glasgow score of 3 or more predicts severe disease" },
     ]),
   });
   check(e1.updated === 3, "batch edit saves 3 notes in one call");
@@ -115,8 +116,14 @@ try {
   // a hundred-edit batch, to time it
   const many = await tool("add_questions", { deck_id: sub.created.id, questions: Array.from({ length: 40 }, (_, i) => ({ question: `Bulk ${i}?`, options: ["v", "w", "x", "y", "z"], answer: "A", explanation: "e", why_wrong: { B: "b", C: "c", D: "d", E: "e" } })) });
   created.questions.push(...many.added);
-  const bulk = await tool("edit_questions", { edits: many.added.map(id => ({ question_id: id, explanation: "bulk edited", topic_note: note })) });
-  check(bulk.updated === 40, "40 edits in one call");
+  const bulk = await tool("edit_questions", { notes: { n1: note }, edits: many.added.map(id => ({ question_id: id, explanation: "bulk edited", topic_note: "n1" })) });
+  check(bulk.updated === 40, "40 edits in one call, note written once");
+  const mixed = await tool("add_questions", { deck_id: sub.created.id, questions: [
+    { question: "Good one?", options: ["v", "w", "x", "y", "z"], answer: "A", explanation: "e", why_wrong: { B: "b", C: "c", D: "d", E: "e" } },
+    { question: "Bad one", options: ["v", "w"], answer: "A", explanation: "e" },
+  ] });
+  created.questions.push(...mixed.added);
+  check(mixed.added.length === 1 && mixed.refused[0].question === 2, "good questions save, only the bad one comes back");
 
   console.log("search, move, image");
   const found = await tool("search_questions", { text: "azathioprine", deck_id: top.created.id });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -200,5 +200,14 @@ describe("topic note style", () => {
   it("is part of the style Claude reads", () => {
     expect(questionStyle().topic_notes).toMatch(/OPENS with one plain sentence/);
     expect(questionStyle().note_exemplars).toHaveLength(2);
+  });
+});
+
+describe("shared notes by key", () => {
+  it("resolves a key and refuses an unknown one", () => {
+    const n = { n1: { title: "T", body: "B" } };
+    expect(withNote({ topic_note: "n1" }, n).topic_note).toEqual({ title: "T", body: "B" });
+    expect(withNote({ topic_note: { title: "x", body: "y" } }, n).topic_note.title).toBe("x");
+    expect(() => withNote({ topic_note: "n9" }, n)).toThrow(/not a key/);
   });
 });
