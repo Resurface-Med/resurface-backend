@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, normalizeArgs, placeAmong, present, questionStyle, summary, toolsFor } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -183,5 +183,22 @@ describe("house style", () => {
     expect(s.rules).not.toMatch(/optExp|uploaded material/);
     expect(s.exemplars).toHaveLength(5);
     expect(s.exemplars[0].answer).toBe("E");
+  });
+});
+
+describe("topic note style", () => {
+  it("passes the house notes", () => {
+    for (const n of NOTE_EXEMPLARS) expect(noteProblems(n)).toEqual([]);
+  });
+  it("refuses a bare bullet list, naming each problem", () => {
+    const bare = { title: "T", body: "**Shape**\n- a\n- ==b==\n\n**Shift**\n- ==c==" };
+    const out = noteProblems(bare).join(" ");
+    expect(out).toMatch(/open with one plain sentence/);
+    expect(out).toMatch(/exactly one ==highlight== \(it has 2\)/);
+    expect(out).toMatch(/Where marks are lost/);
+  });
+  it("is part of the style Claude reads", () => {
+    expect(questionStyle().topic_notes).toMatch(/OPENS with one plain sentence/);
+    expect(questionStyle().note_exemplars).toHaveLength(2);
   });
 });

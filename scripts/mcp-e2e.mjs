@@ -40,7 +40,7 @@ const check = (cond, what) => { if (!cond) throw new Error(`CHECK FAILED: ${what
 const created = { decks: [], questions: [], images: [] };
 const note = {
   title: "Acute pancreatitis",
-  body: "Inflammation of the pancreas from premature enzyme activation.\n\n**Causes**\n- ==Gallstones and alcohol cause most cases==\n- Drugs include azathioprine and furosemide\n\n**Severity**\n- Glasgow score of 3 or more predicts severe disease",
+  body: "Pancreatitis is the pancreas digesting itself; find the cause, then judge how severe it is.\n\n**Causes**\n- ==Gallstones and alcohol cause most cases==\n- Drugs include azathioprine and furosemide\n\n**Severity**\n- Glasgow score of 3 or more predicts severe disease\n\n**Where marks are lost**\n- Gallstones, not alcohol, lead in the UK",
 };
 
 try {
@@ -71,11 +71,12 @@ try {
   });
   const ids = added.added;
   // the four-option question Claude wrote earlier today must be refused, with every problem named
+  const bareNote = await tool("edit_questions", { edits: [{ question_id: ids[0], topic_note: { title: "T", body: "**Shape**\n- a\n- ==b==" } }] }, { expectError: true });
+  check(/open with one plain sentence/.test(bareNote), "a note with no opening sentence is refused");
   const refused = await tool("add_questions", { deck_id: sub.created.id, questions: [{ question: "Name the commonest cause", options: ["Gallstones", "Alcohol", "Drugs", "Trauma"], answer: "A", explanation: "e" }] }, { expectError: true });
   check(/4 options/.test(refused) && /why_wrong/.test(refused) && /\?/.test(refused), "a four-option question is refused with every problem listed");
   const style = await tool("get_question_style", {});
   check(style.exemplars.length === 5, "get_question_style gives the rules and five exemplars");
-  const ids = added.added;
   created.questions.push(...ids);
   check(ids.length === 3, "add_questions adds 3");
   const sorted = await tool("get_questions", { question_ids: ids });
