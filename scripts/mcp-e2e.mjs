@@ -64,17 +64,28 @@ try {
   const added = await tool("add_questions", {
     deck_id: sub.created.id,
     questions: [
-      { question: "A 45-year-old with epigastric pain radiating to the back. Commonest cause?", options: ["Gallstones", "Hypercalcaemia", "Mumps", "Trauma"], answer: "A", explanation: "Gallstones are the commonest cause in the UK.", why_wrong: { B: "Rare.", C: "Rare in adults.", D: "Less common." } },
-      { question: "Which drug can cause pancreatitis?", options: ["Paracetamol", "Azathioprine", "Amoxicillin"], answer: "B", explanation: "Azathioprine is a recognised cause." },
-      { question: "A Glasgow score of 3 or more suggests?", options: ["Mild disease", "Severe disease"], answer: "B", explanation: "3 or more predicts severe pancreatitis." },
+      { question: "A 45-year-old has epigastric pain radiating to the back and a raised amylase. What is the most likely cause?", options: ["Gallstones", "Hypercalcaemia", "Mumps", "Trauma", "Hypertriglyceridaemia"], answer: "A", explanation: "Gallstones are the commonest cause in the UK. They obstruct the ampulla.", why_wrong: { B: "Rare.", C: "Rare in adults.", D: "Less common.", E: "Less common." } },
+      { question: "Which drug is a recognised cause of pancreatitis?", options: ["Paracetamol", "Azathioprine", "Amoxicillin", "Omeprazole", "Metformin"], answer: "B", explanation: "Azathioprine causes pancreatitis. It is idiosyncratic.", why_wrong: { A: "No.", C: "No.", D: "No.", E: "No." } },
+      { question: "What does a Glasgow score of 3 or more suggest?", options: ["1 point", "2 points", "3 points", "4 points", "5 points"], ordered: true, answer: "C", explanation: "3 or more predicts severe disease. It prompts HDU review.", why_wrong: { A: "x", B: "x", D: "x", E: "x" } },
     ],
   });
   const ids = added.added;
+  // the four-option question Claude wrote earlier today must be refused, with every problem named
+  const refused = await tool("add_questions", { deck_id: sub.created.id, questions: [{ question: "Name the commonest cause", options: ["Gallstones", "Alcohol", "Drugs", "Trauma"], answer: "A", explanation: "e" }] }, { expectError: true });
+  check(/4 options/.test(refused) && /why_wrong/.test(refused) && /\?/.test(refused), "a four-option question is refused with every problem listed");
+  const style = await tool("get_question_style", {});
+  check(style.exemplars.length === 5, "get_question_style gives the rules and five exemplars");
+  const ids = added.added;
   created.questions.push(...ids);
   check(ids.length === 3, "add_questions adds 3");
+  const sorted = await tool("get_questions", { question_ids: ids });
+  check(sorted.questions[1].options.A === "Amoxicillin" && sorted.questions[1].answer === "B", "options alphabetised, answer follows");
+  check(sorted.questions[2].options.A === "1 point", "ordered options keep their order");
 
   const deck = await tool("get_deck", { deck_id: sub.created.id });
   check(deck.total === 3 && deck.questions[0].answer?.startsWith("A:"), "get_deck short form");
+  const one = await tool("list_decks", { deck_id: top.created.id });
+  check(one.decks[0].decks.length === 2, "list_decks for one deck");
 
   console.log("editing");
   // The shapes a model really sends: nested JSON as text, ids as text,
@@ -101,7 +112,7 @@ try {
   await tool("edit_questions", { edits: [{ question_id: 999999999, explanation: "x" }] }, { expectError: true });
 
   // a hundred-edit batch, to time it
-  const many = await tool("add_questions", { deck_id: sub.created.id, questions: Array.from({ length: 40 }, (_, i) => ({ question: `Bulk ${i}?`, options: ["a", "b"], answer: "A", explanation: "e" })) });
+  const many = await tool("add_questions", { deck_id: sub.created.id, questions: Array.from({ length: 40 }, (_, i) => ({ question: `Bulk ${i}?`, options: ["v", "w", "x", "y", "z"], answer: "A", explanation: "e", why_wrong: { B: "b", C: "c", D: "d", E: "e" } })) });
   created.questions.push(...many.added);
   const bulk = await tool("edit_questions", { edits: many.added.map(id => ({ question_id: id, explanation: "bulk edited", topic_note: note })) });
   check(bulk.updated === 40, "40 edits in one call");
@@ -116,6 +127,9 @@ try {
   check(moved.total === 1, "move_questions moved one");
   const img = await tool("add_image", { question_id: ids[0], image_url: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/280px-PNG_transparency_demonstration_1.png", place: "explanation", caption: "Test figure" });
   created.images.push(img.attached);
+  const page = await tool("add_image", { question_id: ids[1], image_url: "https://commons.wikimedia.org/wiki/File:PNG_transparency_demonstration_1.png", place: "question" });
+  created.images.push(page.attached);
+  check(!!page.attached, "add_image from a Commons File: page");
   check(/\.png$/.test(img.attached), "add_image stored a copy");
   const withImg = await tool("get_questions", { question_ids: [ids[0]] });
   check(withImg.questions[0].explanation.includes(img.attached), "figure line in the explanation");

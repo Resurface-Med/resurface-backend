@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, normalizeArgs, placeAmong, present, summary, toolsFor } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, normalizeArgs, placeAmong, present, questionStyle, summary, toolsFor } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -153,5 +153,35 @@ describe("normalizeArgs", () => {
   });
   it("leaves ordinary text alone", () => {
     expect(normalizeArgs({ explanation: "[see figure] and more" })).toEqual({ explanation: "[see figure] and more" });
+  });
+});
+
+describe("house style", () => {
+  const good = { question: "Which cell carries oxygen?", options: ["Platelet", "Neutrophil", "Erythrocyte", "Monocyte", "Basophil"], answer: "C", explanation: "Haemoglobin. In red cells.", why_wrong: { A: "Clotting.", B: "Bacteria.", D: "Becomes macrophage.", E: "Allergy." } };
+  it("alphabetises and keeps the answer and whys with their options", () => {
+    const p = buildPayload(good, {}, { style: true });
+    expect(p.opts).toEqual(["Basophil", "Erythrocyte", "Monocyte", "Neutrophil", "Platelet"]);
+    expect(p.opts[p.ans]).toBe("Erythrocyte");
+    expect(p.optExp).toEqual(["Allergy.", null, "Becomes macrophage.", "Bacteria.", "Clotting."]);
+  });
+  it("refuses four options, missing whys and giveaways, all at once", () => {
+    const bad = { ...good, question: "The erythrocyte carries oxygen. Name it", options: good.options.slice(0, 4), why_wrong: { A: "x" } };
+    let msg = "";
+    try { buildPayload(bad, {}, { style: true }); } catch (e) { msg = e.message; }
+    expect(msg).toMatch(/4 options/);
+    expect(msg).toMatch(/\?/);
+    expect(msg).toMatch(/why_wrong is missing/);
+    expect(msg).toMatch(/gives away/);
+  });
+  it("leaves an edit that does not touch the options alone", () => {
+    const p = buildPayload({ question: "Q?", options: ["a", "b", "c", "d"], answer: "A", explanation: "e" });
+    expect(() => buildPayload({ explanation: "new" }, p, { style: true })).not.toThrow();
+  });
+  it("gives Claude the app's rules and exemplars", () => {
+    const s = questionStyle();
+    expect(s.rules).toMatch(/Five\. Terse noun phrases/);
+    expect(s.rules).not.toMatch(/optExp|uploaded material/);
+    expect(s.exemplars).toHaveLength(5);
+    expect(s.exemplars[0].answer).toBe("E");
   });
 });
