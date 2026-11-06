@@ -108,3 +108,11 @@ describe("short and full forms", () => {
     expect(out.questions[0].topic_note).toBeUndefined();
   });
 });
+
+describe("aliases", () => {
+  it("still answers the old edit_question name, routed to edit_questions", async () => {
+    const tools = toolsFor({});
+    expect(tools.has("edit_question")).toBe(true);
+    expect(tools.list().some(t => t.name === "edit_question")).toBe(false);
+  });
+});
