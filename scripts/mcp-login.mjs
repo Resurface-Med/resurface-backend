@@ -65,3 +65,4 @@ const t = await tok.json();
 if (!tok.ok || !t.access_token) { console.error("token exchange failed", tok.status, Object.keys(t)); process.exit(1); }
 writeFileSync(out, JSON.stringify({ access_token: t.access_token, refresh_token: t.refresh_token, client_id: client.client_id }), { mode: 0o600 });
 console.log("TOKEN SAVED", Object.keys(t).join(","));
+process.exit(0);
