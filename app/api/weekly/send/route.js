@@ -1,6 +1,6 @@
 // The weekly team email. Every Monday at 9am the database (weekly_summary_tick,
 // migration 0072 in resurface-app) posts the week's business numbers and the
-// admins' addresses here; Gemini writes the note, and Resend sends it.
+// admins' addresses here; Claude writes the note, and Resend sends it.
 //
 // Guarded by PUSH_SECRET, the same secret the study reminders use, already
 // in both Vercel and the database vault. RESEND_API_KEY is a send-only key
