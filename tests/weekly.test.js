@@ -25,9 +25,9 @@ describe("weekly email", () => {
     expect(bad.join(" ")).toMatch(/2 question reports/);
   });
   it("renders a subject, escaped HTML and a text version", () => {
-    expect(subject(week)).toBe("Resurface week 26 Oct – 1 Nov: 35 active, 8,150 answers");
+    expect(subject(week)).toBe("Resurface weekly · 26 Oct – 1 Nov");
     const html = render(week);
-    expect(html).toContain("How Resurface went this week");
+    expect(html).toContain("Your week at Resurface");
     expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
     expect(html).not.toContain("<b>x</b>");
     expect(text(week)).toContain("Weekly active users: 35");
