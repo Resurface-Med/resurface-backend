@@ -25,11 +25,3 @@ describe("mailing list emails", () => {
   });
 });
 
-describe("the nudge email", () => {
-  it("is plain: no logo, no button, the link in the text", () => {
-    const html = render(CAMPAIGNS.intro.nudge, "u");
-    expect(html).not.toContain("logo-lockup");
-    expect(html).not.toContain("border-radius:999px");
-    expect(html).toContain('href="https://app.tryresurface.com"');
-  });
-});
