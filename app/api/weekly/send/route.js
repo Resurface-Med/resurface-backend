@@ -1,4 +1,4 @@
-// The weekly team email. Every Monday the database (weekly_summary_tick,
+// The weekly team email. Every Friday at 9am the database (weekly_summary_tick,
 // migration 0072 in resurface-app) posts the week's business numbers and the
 // admins' addresses here; Gemini writes the note, and Resend sends it.
 //
