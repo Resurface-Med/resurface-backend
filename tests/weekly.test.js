@@ -20,10 +20,11 @@ describe("weekly email", () => {
     expect(JSON.stringify(keyFigures(week))).not.toMatch(/ccuracy/);
   });
   it("renders the note escaped, with a working fallback", () => {
-    const note = { headline: "Growth <doubled>", main: "m", growth: "g", sticking: "s", watch: "", next: ["Do a"], by: "x" };
+    const note = { headline: "Growth <doubled>", main: "m", sections: [{ title: "Year 1 is catching up", body: "b" }], next: ["Do a"], by: "x" };
     const html = render(week, note);
     expect(html).toContain("Growth &lt;doubled&gt;");
     expect(html).toContain("What to do this week");
+    expect(html).toContain("Year 1 is catching up");
     expect(html).not.toContain("Worth watching");
     expect(subject(week, note)).toBe("Resurface this week: Growth <doubled>");
     expect(text(week, note)).toContain("1. Do a");
