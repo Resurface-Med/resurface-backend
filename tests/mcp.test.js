@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions, shrink } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions, exhibitProblems, shrink } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -221,6 +221,26 @@ describe("check_deck", () => {
     expect(out["Not five options; Resurface questions have exactly five."]).toEqual([2]);
     expect(out["No topic note"]).toEqual([2]);
     expect(out["Duplicate question (same wording as another)"]).toEqual([1, 2]);
+  });
+});
+
+describe("results", () => {
+  const labs = rows => ({ kind: "labs", title: "Investigations", rows });
+  it("wants a range on every number, or a note saying why not", () => {
+    const q = "A man is unwell. His results are shown. What is the diagnosis?";
+    expect(exhibitProblems({ q, exhibit: labs([{ name: "pH", value: "7.18", range: "7.35 – 7.45" }]) })).toEqual([]);
+    expect(exhibitProblems({ q, exhibit: labs([{ name: "pH", value: "7.18" }]) })[0]).toMatch(/no normal range/);
+    expect(exhibitProblems({ q, exhibit: { ...labs([{ name: "Fasting glucose", value: "5.3" }]), note: "The cut-off is the question." } })).toEqual([]);
+    expect(exhibitProblems({ q, exhibit: { kind: "lines", title: "Pleural fluid:", rows: [[{ name: "Appearance", value: "Clear" }]] } })).toEqual([]);
+  });
+  it("wants the stem to say the results are there", () => {
+    const ex = labs([{ name: "TSH", value: "7.8", range: "0.4 – 4.0" }]);
+    expect(exhibitProblems({ q: "A 45-year-old woman has tiredness. How is this classified?", exhibit: ex })[0]).toMatch(/stem never says/);
+    expect(exhibitProblems({ q: "A 45-year-old woman has tiredness. Her thyroid function is shown. How is this classified?", exhibit: ex })).toEqual([]);
+  });
+  it("shows the results to whoever reads a question", () => {
+    const q = present({ id: 1, payload: { q: "x?", opts: [], exhibit: labs([]) } });
+    expect(q.results.kind).toBe("labs");
   });
 });
 
