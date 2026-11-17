@@ -255,9 +255,10 @@ describe("one right answer", () => {
     const p = { ...base, q: "What is the most common cause?", optExp: [null, "Klebsiella is a cause, but less common than E. coli.", "No.", "No.", "No."] };
     expect(answerProblems(p)).toEqual([]);
   });
-  it("refuses a wrong option that joins two claims", () => {
-    const p = { ...base, q: "Which statement is correct?", opts: ["A1", "Both osteoblasts and osteoclasts express it", "C1", "D1", "E1"] };
-    expect(answerProblems(p)[0]).toMatch(/joins two claims/);
+  it("catches the wording of the real flaws", () => {
+    for (const w of ["Statins can cause rhabdomyolysis and kidney injury.", "While chlamydia can cause neonatal conjunctivitis, adults…", "GABA is involved but is not the main prolactin inhibitor."]) {
+      expect(answerProblems({ ...base, q: "Which is a cause?", optExp: [null, w, "No.", "No.", "No."] })).toHaveLength(1);
+    }
   });
   it("is in the style every writer reads", () => {
     expect(questionStyle().rules).toMatch(/ONE RIGHT ANSWER/);
