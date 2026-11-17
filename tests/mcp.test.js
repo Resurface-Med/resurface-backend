@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions, exhibitProblems, shrink } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions, exhibitProblems, answerProblems, shrink } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -241,6 +241,26 @@ describe("results", () => {
   it("shows the results to whoever reads a question", () => {
     const q = present({ id: 1, payload: { q: "x?", opts: [], exhibit: labs([]) } });
     expect(q.results.kind).toBe("labs");
+  });
+});
+
+describe("one right answer", () => {
+  const base = { opts: ["A1", "B1", "C1", "D1", "E1"], ans: 0, optExp: [null, "No.", "No.", "No.", "No."] };
+  it("refuses a why_wrong that admits its option is true", () => {
+    const p = { ...base, q: "Which is an action of CCK?", optExp: [null, "CCK relaxes the sphincter of Oddi, but it is not the main action.", "No.", "No.", "No."] };
+    expect(answerProblems(p)[0]).toMatch(/two right answers/);
+    expect(answerProblems({ ...p, optExp: [null, "Statins can also cause it.", "No.", "No.", "No."] })[0]).toMatch(/B admits/);
+  });
+  it("allows it when the stem asks for the main one", () => {
+    const p = { ...base, q: "What is the most common cause?", optExp: [null, "Klebsiella is a cause, but less common than E. coli.", "No.", "No.", "No."] };
+    expect(answerProblems(p)).toEqual([]);
+  });
+  it("refuses a wrong option that joins two claims", () => {
+    const p = { ...base, q: "Which statement is correct?", opts: ["A1", "Both osteoblasts and osteoclasts express it", "C1", "D1", "E1"] };
+    expect(answerProblems(p)[0]).toMatch(/joins two claims/);
+  });
+  it("is in the style every writer reads", () => {
+    expect(questionStyle().rules).toMatch(/ONE RIGHT ANSWER/);
   });
 });
 
