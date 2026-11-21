@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleBody, handleMessage } from "../lib/mcp/protocol.js";
-import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions, exhibitProblems, answerProblems, shrink } from "../lib/mcp/tools.js";
+import { STEP, buildPayload, checkHighlights, fullSet, NOTE_EXEMPLARS, normalizeArgs, noteProblems, placeAmong, present, questionStyle, summary, toolsFor, withNote, auditQuestions, exhibitProblems, answerProblems, shrink, unknownFields } from "../lib/mcp/tools.js";
 
 const fakeTools = {
   list: () => [{ name: "echo", inputSchema: { type: "object" } }],
@@ -273,5 +273,76 @@ describe("shrink", () => {
     expect(out.type).toBe("image/webp");
     const meta = await sharp(Buffer.from(out.buf)).metadata();
     expect(Math.max(meta.width, meta.height)).toBe(1600);
+  });
+});
+
+describe("results tables through the connector", () => {
+  const base = { question: "A man is breathless. His blood gas is shown. What is the disturbance?", options: ["Metabolic acidosis", "Metabolic alkalosis", "Normal gas", "Respiratory acidosis", "Respiratory alkalosis"], answer: "D", explanation: "High CO2, low pH.", why_wrong: { A: "Bicarbonate is not low.", B: "pH is low.", C: "pH is low.", E: "CO2 is high." } };
+  const gas = { kind: "labs", title: "Arterial blood gas (on air)", rows: [
+    { name: "pH", value: "7.25", range: "7.35 – 7.45" },
+    { name: "PaCO2", value: "8.6", unit: "kPa", range: "4.7 – 6.0" },
+    { name: "Bicarbonate", value: "28", unit: "mmol/L", range: "22 – 26" },
+  ] };
+  it("saves an exhibit, also when sent as results", () => {
+    expect(buildPayload({ ...base, exhibit: gas }).exhibit).toEqual(gas);
+    expect(buildPayload({ ...base, results: gas }).exhibit).toEqual(gas);
+  });
+  it("removes it with null, with any ask sentence", () => {
+    const p = buildPayload({ ...base, exhibit: gas, ask_after_results: "What is the disturbance?" });
+    expect(p.ask).toBe("What is the disturbance?");
+    const q = buildPayload({ exhibit: null }, p);
+    expect(q.exhibit).toBeUndefined();
+    expect(q.ask).toBeUndefined();
+  });
+  it("refuses a table that cannot be true, with the app's own reasons", () => {
+    const wrong = { ...gas, rows: gas.rows.map(r => (r.name === "pH" ? { ...r, value: "7.45" } : r)) };
+    expect(() => buildPayload({ ...base, exhibit: wrong })).toThrow(/pH does not follow/);
+    expect(() => buildPayload({ ...base, exhibit: { kind: "chart", title: "x" } })).toThrow(/Unknown exhibit kind/);
+  });
+  it("holds new tables to the range and stem rules", () => {
+    const bare = { ...gas, rows: gas.rows.map(({ range, ...r }) => r) };
+    expect(() => buildPayload({ ...base, exhibit: bare }, {}, { style: true })).toThrow(/no normal range/);
+    expect(() => buildPayload({ ...base, question: "A man is breathless. What is the disturbance?", exhibit: gas }, {}, { style: true })).toThrow(/stem never says/);
+  });
+  it("needs a table before an ask sentence", () => {
+    expect(() => buildPayload({ ...base, ask_after_results: "Which?" })).toThrow(/needs a results table/);
+  });
+});
+
+describe("unknown fields", () => {
+  it("names what it does not recognise instead of dropping it", () => {
+    expect(unknownFields({ question: "x", table: {} })).toEqual(["table"]);
+    expect(unknownFields({ question: "x", exhibit: {}, results: {}, ask_after_results: "y" })).toEqual([]);
+    expect(unknownFields({ question_id: 3, question: "x" }, ["question_id"])).toEqual([]);
+  });
+
+  const fakeCtx = versions => {
+    const row = { id: 7, deck_id: "d", payload: buildPayload({ question: "Which drug blocks COX-2?", options: ["Aspirin", "Celecoxib", "Ibuprofen", "Naproxen", "Paracetamol"], answer: "B", explanation: "Celecoxib is COX-2 selective.", why_wrong: { A: "Aspirin is non-selective.", C: "Ibuprofen is non-selective.", D: "Naproxen is non-selective.", E: "Paracetamol is not an NSAID." } }) };
+    const updates = [];
+    let v = 0;
+    const db = {
+      rpc: async name => (name === "featured_version" ? { data: versions[Math.min(v++, versions.length - 1)], error: null } : { data: null, error: null }),
+      from: () => ({
+        select: () => ({ in: async () => ({ data: [row], error: null }) }),
+        update: payload => ({ eq: async () => { updates.push(payload); return { error: null }; } }),
+      }),
+    };
+    return { ctx: { db }, updates };
+  };
+
+  it("refuses an edit with an unknown field and saves nothing", async () => {
+    const { ctx, updates } = fakeCtx([1, 1]);
+    await expect(toolsFor(ctx).call("edit_questions", { edits: [{ question_id: 7, table: { rows: [] } }] })).rejects.toThrow(/Unknown field "table"/);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("says when an edit reached a ready-made deck", async () => {
+    const live = fakeCtx([10, 11]);
+    const out = await toolsFor(live.ctx).call("edit_questions", { edits: [{ question_id: 7, explanation: "Celecoxib selectively blocks COX-2." }] });
+    expect(out.updated).toBe(1);
+    expect(out.live).toMatch(/ready-made/);
+    const own = fakeCtx([10, 10]);
+    const out2 = await toolsFor(own.ctx).call("edit_questions", { edits: [{ question_id: 7, explanation: "Celecoxib selectively blocks COX-2." }] });
+    expect(out2.live).toBeUndefined();
   });
 });
