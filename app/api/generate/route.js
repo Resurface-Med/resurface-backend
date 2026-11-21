@@ -1,6 +1,7 @@
 import { allowedOrigin, bearer, json, logUsage, preflight, rateLimited, takeQuota, verify } from "../../../lib/http.js";
 import { dropRepeats } from "../../../lib/dedupe.js";
 import { dropGiveaways } from "../../../lib/giveaway.js";
+import { dropLectureRefs } from "../../../lib/lectureRef.js";
 import { callGemini, parseJson, upstreamError } from "../../../lib/gemini.js";
 import { systemPrompt, QUESTION_SCHEMA, alphabetise } from "../../../lib/prompt.js";
 
@@ -258,7 +259,9 @@ export async function POST(req) {
     }
 
     /* The prompt asks for neither of these; both still happen. */
-    const fresh = dropGiveaways(parsed);
+    const sourced = dropLectureRefs(parsed);
+    if (sourced.removed) console.log(`generate dropped ${sourced.removed} pointing at the lecture, of ${parsed.length}`);
+    const fresh = dropGiveaways(sourced.kept);
     if (fresh.removed) console.log(`generate dropped ${fresh.removed} with the answer in the stem, of ${parsed.length}`);
     const { kept: questions, removed } = dropRepeats(fresh.kept, existing);
     if (removed) console.log(`generate dropped ${removed} repeat${removed === 1 ? "" : "s"} of ${parsed.length}`);
