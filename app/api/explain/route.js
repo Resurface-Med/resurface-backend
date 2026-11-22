@@ -121,7 +121,6 @@ export async function POST(req) {
       origin, apiKey, ctx, message: message.trim(), history, remaining: quota.remaining,
       token, userId: user.id,
       stream: body?.stream === true,
-      quick: body?.quick === true,
     });
   }
 
@@ -255,7 +254,7 @@ export function lastWholeSentence(text) {
   return m ? m[0].trim() : t;
 }
 
-async function followUp({ origin, apiKey, ctx, message, history, remaining, token, userId, stream = false, quick = false }) {
+async function followUp({ origin, apiKey, ctx, message, history, remaining, token, userId, stream = false }) {
   if (message.length > 500) {
     return json({ error: "Keep follow-ups under 500 characters." }, 400, origin);
   }
@@ -282,7 +281,7 @@ async function followUp({ origin, apiKey, ctx, message, history, remaining, toke
     /* "ok"/"thanks": nothing to reason through, so no thinking step. Not
        the quick buttons: at "low" the model already skips thinking when a
        request is easy, and forcing "minimal" made a clue worse in testing
-       (2026-10-28). `quick` is accepted but changes nothing for now. */
+       (2026-10-28). The app still sends `quick` for those; it is ignored. */
     const light = ACK.test(message);
     const args = {
       apiKey,

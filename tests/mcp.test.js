@@ -300,7 +300,7 @@ describe("results tables through the connector", () => {
     expect(() => buildPayload({ ...base, exhibit: { kind: "chart", title: "x" } })).toThrow(/Unknown exhibit kind/);
   });
   it("holds new tables to the range and stem rules", () => {
-    const bare = { ...gas, rows: gas.rows.map(({ range, ...r }) => r) };
+    const bare = { ...gas, rows: gas.rows.map(({ range: _range, ...r }) => r) };
     expect(() => buildPayload({ ...base, exhibit: bare }, {}, { style: true })).toThrow(/no normal range/);
     expect(() => buildPayload({ ...base, question: "A man is breathless. What is the disturbance?", exhibit: gas }, {}, { style: true })).toThrow(/stem never says/);
   });

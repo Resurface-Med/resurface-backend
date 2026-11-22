@@ -381,13 +381,14 @@ describe("transient upstream failures", () => {
     expect(res.status).toBe(200);
   });
 
-  it("gives up after four attempts and says the far end was busy", async () => {
+  it("gives up after three attempts and says the far end was busy", async () => {
     const f = geminiReturns({ error: { message: "high demand" } }, false, 503);
     const res = await postThroughRetries(req());
     const body = await res.json();
-    // One call plus the three backoffs. Raised from three deliberately: the
-    // route now sets its own maxDuration, so there is budget for another try.
-    expect(f).toHaveBeenCalledTimes(4);
+    // One call plus two backoffs (lib/gemini callGemini). It was three
+    // backoffs until 676ba76 (2026-09-15) went back to two; this test kept
+    // expecting four calls, and had failed ever since.
+    expect(f).toHaveBeenCalledTimes(3);
     expect(res.status).toBe(503);
     expect(body.error).toMatch(/busy/i);
     expect(body.error).not.toMatch(/gemini/i);
