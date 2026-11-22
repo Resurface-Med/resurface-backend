@@ -1,7 +1,5 @@
 {
-  "regions": [
-    "dub1"
-  ],
+  "regions": ["lhr1"],
   "crons": [
     {
       "path": "/api/keepalive",
