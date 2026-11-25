@@ -23,7 +23,9 @@ export async function POST(req) {
     const r = await sendPush(it.subscription, {
       title: String(it.title || "Resurface").slice(0, 80),
       body: String(it.body || "").slice(0, 200),
-      url: "/?view=study",
+      /* Where a tap opens: Study for a reminder, Admin for an admin alert
+         (0107). Only a path on the app itself. */
+      url: typeof it.url === "string" && /^\/(?!\/)/.test(it.url) ? it.url.slice(0, 200) : "/?view=study",
       badge: Number.isFinite(it.badge) ? it.badge : undefined,
     });
     if (r.ok) sent += 1;
